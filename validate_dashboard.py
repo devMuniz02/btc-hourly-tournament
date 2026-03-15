@@ -23,7 +23,7 @@ import main as tournament
 
 
 HISTORY_PATH = Path("history.csv")
-DASHBOARD_PATH = Path("dashboard.png")
+DASHBOARD_PATH = Path("assets/dashboard.png")
 LOCAL_LAST_PREDICTION_PATH = Path("last_prediction.json")
 
 

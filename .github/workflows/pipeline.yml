@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -49,10 +50,10 @@ jobs:
 
       - name: Commit dashboard artifacts
         run: |
-          if ! git diff --quiet -- history.csv dashboard.png; then
+          if ! git diff --quiet -- history.csv assets/dashboard.png; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add history.csv dashboard.png
+            git add history.csv assets/dashboard.png
             git commit -m "Update BTC validation dashboard [skip ci]"
             git push origin HEAD:main
           fi
