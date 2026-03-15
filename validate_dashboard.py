@@ -6,7 +6,6 @@ Validate the prior BTC directional prediction and render a simple dashboard.
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +14,6 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import mlflow
 import pandas as pd
 from mlflow import MlflowClient
 
@@ -48,39 +46,14 @@ def get_current_champion_info(
     }
 
 
-def load_last_prediction_from_mlflow(client: MlflowClient, experiment_name: str) -> dict[str, Any] | None:
-    experiment = client.get_experiment_by_name(experiment_name)
-    if experiment is None:
-        return None
-
-    runs = client.search_runs(
-        experiment_ids=[experiment.experiment_id],
-        filter_string="attributes.status = 'FINISHED'",
-        order_by=["attributes.start_time DESC"],
-        max_results=20,
-    )
-    for run in runs:
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                downloaded = client.download_artifacts(
-                    run.info.run_id,
-                    tournament.LAST_PREDICTION_PATH.name,
-                    temp_dir,
-                )
-                return json.loads(Path(downloaded).read_text(encoding="utf-8"))
-        except Exception:
-            continue
+def load_last_prediction() -> dict[str, Any] | None:
+    if LOCAL_LAST_PREDICTION_PATH.exists():
+        return json.loads(LOCAL_LAST_PREDICTION_PATH.read_text(encoding="utf-8"))
     return None
 
 
-def load_last_prediction(client: MlflowClient, experiment_name: str) -> dict[str, Any] | None:
-    if LOCAL_LAST_PREDICTION_PATH.exists():
-        return json.loads(LOCAL_LAST_PREDICTION_PATH.read_text(encoding="utf-8"))
-    return load_last_prediction_from_mlflow(client, experiment_name)
-
-
 def fetch_recent_candles() -> pd.DataFrame:
-    return tournament.fetch_ohlcv(limit=200)
+    return tournament.fetch_ohlcv(limit=8)
 
 
 def resolve_actual_direction(
@@ -226,13 +199,16 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
 def main() -> None:
     client, registered_model_name, experiment_name = configure_tracking()
     champion = get_current_champion_info(client, registered_model_name)
-    prediction_record = load_last_prediction(client, experiment_name)
+    prediction_record = load_last_prediction()
 
     history = load_history()
     if prediction_record is None:
         stats = compute_stats(history)
         render_dashboard(history, stats)
-        print("No prior prediction found. Dashboard refreshed with existing history only.")
+        print(
+            "No local last_prediction.json found. "
+            "Skipping validation and refreshing the dashboard with existing history only."
+        )
         return
 
     if prediction_already_recorded(history, prediction_record):
