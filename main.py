@@ -41,12 +41,16 @@ DEVICE = torch.device("cpu")
 DEFAULT_EXPERIMENT = "btc-directional-tournament"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
-EXCHANGE_CANDIDATES = [
-    ("kraken", "BTC/USDT"),
-    ("okx", "BTC/USDT"),
-    ("kucoin", "BTC/USDT"),
-    ("bitfinex", "BTC/USDT"),
-    ("binance", "BTC/USDT"),
+BINANCE_CANDIDATES = [
+    ("binance", "BTC/USDT", {}),
+    ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
+    ("binanceus", "BTC/USDT", {}),
+]
+FALLBACK_EXCHANGE_CANDIDATES = [
+    ("kraken", "BTC/USDT", {}),
+    ("okx", "BTC/USDT", {}),
+    ("kucoin", "BTC/USDT", {}),
+    ("bitfinex", "BTC/USDT", {}),
 ]
 
 
@@ -76,10 +80,17 @@ def configure_tracking() -> str:
 
 def fetch_ohlcv(limit: int = LOOKBACK_HOURS) -> pd.DataFrame:
     failures: list[str] = []
-    for exchange_id, symbol in EXCHANGE_CANDIDATES:
+    candidates = BINANCE_CANDIDATES + FALLBACK_EXCHANGE_CANDIDATES
+    for exchange_id, symbol, extra_config in candidates:
         try:
             exchange_class = getattr(ccxt, exchange_id)
-            exchange = exchange_class({"enableRateLimit": True, "timeout": 30000})
+            exchange = exchange_class(
+                {
+                    "enableRateLimit": True,
+                    "timeout": 30000,
+                    **extra_config,
+                }
+            )
             candles = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
             if len(candles) < 300:
                 raise RuntimeError(
@@ -93,11 +104,11 @@ def fetch_ohlcv(limit: int = LOOKBACK_HOURS) -> pd.DataFrame:
             print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
             return frame
         except Exception as exc:
-            failures.append(f"{exchange_id}: {exc}")
-            print(f"Exchange fallback failed for {exchange_id}: {exc}")
+            failures.append(f"{exchange_id}:{symbol}: {exc}")
+            print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
 
     raise RuntimeError(
-        "Could not fetch BTC/USDT candles from any configured exchange. "
+        "Could not fetch BTC/USDT candles from Binance variants or fallback exchanges. "
         + " | ".join(failures)
     )
 
