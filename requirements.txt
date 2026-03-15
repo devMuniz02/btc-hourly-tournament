@@ -1,0 +1,13 @@
+ipykernel
+requests
+pandas
+py-clob-client
+streamlit
+plotly
+scikit-learn
+ccxt
+xgboost
+torch
+mlflow
+dagshub
+joblib
