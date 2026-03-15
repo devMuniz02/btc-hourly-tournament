@@ -4,6 +4,7 @@ pandas
 py-clob-client
 streamlit
 plotly
+matplotlib
 scikit-learn
 ccxt
 xgboost

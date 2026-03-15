@@ -41,6 +41,7 @@ DEVICE = torch.device("cpu")
 DEFAULT_EXPERIMENT = "btc-directional-tournament"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
+LAST_PREDICTION_PATH = Path("last_prediction.json")
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
     ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
@@ -822,6 +823,46 @@ def print_scoreboard(results: list[dict[str, Any]]) -> None:
         )
 
 
+def build_prediction_record(
+    active_result: dict[str, Any],
+    future_row: pd.DataFrame,
+    registered_model_name: str,
+) -> dict[str, Any]:
+    reference_timestamp = pd.Timestamp(future_row["timestamp"].iloc[0])
+    target_timestamp = reference_timestamp + pd.Timedelta(hours=1)
+    return {
+        "status": "success",
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "registered_model_name": registered_model_name,
+        "model_name": active_result["candidate"].name,
+        "probability_up": float(active_result["next_probability"]),
+        "predicted_signal": active_result["next_signal"],
+        "predicted_label": int(active_result["next_probability"] >= 0.5),
+        "reference_candle_timestamp": reference_timestamp.isoformat(),
+        "target_candle_timestamp": target_timestamp.isoformat(),
+        "reference_close": float(future_row["close"].iloc[0]),
+        "symbol": SYMBOL,
+        "timeframe": TIMEFRAME,
+    }
+
+
+def write_failed_prediction_record(exc: Exception) -> None:
+    target_timestamp = (pd.Timestamp.utcnow().floor("h") + pd.Timedelta(hours=1)).isoformat()
+    failure_record = {
+        "status": "failed",
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "registered_model_name": get_env_str("MLFLOW_MODEL_NAME") or DEFAULT_MODEL_NAME,
+        "symbol": SYMBOL,
+        "timeframe": TIMEFRAME,
+        "target_candle_timestamp": target_timestamp,
+        "error": str(exc),
+    }
+    LAST_PREDICTION_PATH.write_text(
+        json.dumps(failure_record, indent=2),
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     set_seed()
     registered_model_name = configure_tracking()
@@ -850,6 +891,30 @@ def main() -> None:
         champion_result["name"] = f"{champion_result['name']} (champion)"
         champion_result["registry_version"] = champion_meta["version"]
         all_results.append(champion_result)
+
+    best_challenger = sorted(challenger_results, key=ranking_key)[0]
+    null_model_block = (
+        best_challenger["f1"] <= 0.5 or best_challenger["accuracy"] <= 0.5
+    )
+
+    if champion_result is None:
+        should_promote = not null_model_block
+        active_result = best_challenger
+    else:
+        should_promote = (
+            best_challenger["f1"] > champion_result["f1"] and not null_model_block
+        )
+        active_result = best_challenger if should_promote else champion_result
+
+    prediction_record = build_prediction_record(
+        active_result=active_result,
+        future_row=future_row,
+        registered_model_name=registered_model_name,
+    )
+    LAST_PREDICTION_PATH.write_text(
+        json.dumps(prediction_record, indent=2),
+        encoding="utf-8",
+    )
 
     with mlflow.start_run(run_name="btc-directional-tournament"):
         mlflow.set_tags(
@@ -884,22 +949,12 @@ def main() -> None:
             ),
             "tournament_results.json",
         )
+        mlflow.log_text(
+            json.dumps(prediction_record, indent=2),
+            LAST_PREDICTION_PATH.name,
+        )
 
     print_scoreboard(all_results)
-
-    best_challenger = sorted(challenger_results, key=ranking_key)[0]
-    null_model_block = (
-        best_challenger["f1"] <= 0.5 or best_challenger["accuracy"] <= 0.5
-    )
-
-    if champion_result is None:
-        should_promote = not null_model_block
-        active_result = best_challenger
-    else:
-        should_promote = (
-            best_challenger["f1"] > champion_result["f1"] and not null_model_block
-        )
-        active_result = best_challenger if should_promote else champion_result
 
     if null_model_block:
         print(
@@ -939,6 +994,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
+        write_failed_prediction_record(exc)
         print(f"Fatal error: {exc}")
         traceback.print_exc()
         raise

@@ -5,6 +5,9 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   tournament:
     runs-on: ubuntu-latest
@@ -22,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,6 +43,19 @@ jobs:
           test -n "$MLFLOW_TRACKING_URI"
           test -n "$MLFLOW_TRACKING_USERNAME"
           test -n "$MLFLOW_TRACKING_PASSWORD"
+
+      - name: Validate previous prediction and refresh dashboard
+        run: python validate_dashboard.py
+
+      - name: Commit dashboard artifacts
+        run: |
+          if ! git diff --quiet -- history.csv dashboard.png; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add history.csv dashboard.png
+            git commit -m "Update BTC validation dashboard [skip ci]"
+            git push origin HEAD:main
+          fi
 
       - name: Run directional tournament
         run: python main.py
