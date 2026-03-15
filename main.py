@@ -690,13 +690,30 @@ def get_current_champion(
     except Exception:
         return None, None
 
+    candidate_paths = [
+        "model/artifacts/model_dir",
+        "model_dir",
+    ]
     with tempfile.TemporaryDirectory() as temp_dir:
-        local_model_dir = client.download_artifacts(
-            version.run_id,
-            "model/artifacts/model_dir",
-            temp_dir,
-        )
-        candidate = load_candidate_package(local_model_dir)
+        candidate = None
+        last_error: Exception | None = None
+        for artifact_path in candidate_paths:
+            try:
+                local_model_dir = client.download_artifacts(
+                    version.run_id,
+                    artifact_path,
+                    temp_dir,
+                )
+                candidate = load_candidate_package(local_model_dir)
+                break
+            except Exception as exc:
+                last_error = exc
+        if candidate is None:
+            print(
+                "Champion alias exists but its artifacts could not be loaded. "
+                f"Proceeding without champion. Last error: {last_error}"
+            )
+            return None, None
     metadata = {"version": version.version, "run_id": version.run_id}
     return candidate, metadata
 
