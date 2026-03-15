@@ -10,12 +10,12 @@ import math
 import os
 import random
 import tempfile
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import ccxt
-import dagshub
 import joblib
 import mlflow
 import mlflow.pyfunc
@@ -41,6 +41,13 @@ DEVICE = torch.device("cpu")
 DEFAULT_EXPERIMENT = "btc-directional-tournament"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
+EXCHANGE_CANDIDATES = [
+    ("kraken", "BTC/USDT"),
+    ("okx", "BTC/USDT"),
+    ("kucoin", "BTC/USDT"),
+    ("bitfinex", "BTC/USDT"),
+    ("binance", "BTC/USDT"),
+]
 
 
 def set_seed(seed: int = SEED) -> None:
@@ -51,38 +58,48 @@ def set_seed(seed: int = SEED) -> None:
 
 
 def configure_tracking() -> str:
-    owner = os.getenv("DAGSHUB_OWNER")
-    repo = os.getenv("DAGSHUB_REPO")
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    username = os.getenv("MLFLOW_TRACKING_USERNAME")
+    password = os.getenv("MLFLOW_TRACKING_PASSWORD")
 
-    if owner and repo:
-        try:
-            dagshub.init(repo_owner=owner, repo_name=repo, mlflow=True)
-        except Exception as exc:
-            if not tracking_uri:
-                raise RuntimeError(
-                    "DagsHub initialization failed and MLFLOW_TRACKING_URI is not set."
-                ) from exc
+    if not tracking_uri:
+        raise RuntimeError("MLFLOW_TRACKING_URI is required.")
+    if not username:
+        raise RuntimeError("MLFLOW_TRACKING_USERNAME is required.")
+    if not password:
+        raise RuntimeError("MLFLOW_TRACKING_PASSWORD is required.")
 
-    if tracking_uri:
-        mlflow.set_tracking_uri(tracking_uri)
-
+    mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT", DEFAULT_EXPERIMENT))
     return os.getenv("MLFLOW_MODEL_NAME", DEFAULT_MODEL_NAME)
 
 
 def fetch_ohlcv(limit: int = LOOKBACK_HOURS) -> pd.DataFrame:
-    exchange = ccxt.binance({"enableRateLimit": True})
-    candles = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, limit=limit)
-    if len(candles) < 300:
-        raise RuntimeError("Binance returned too few candles for tournament training.")
+    failures: list[str] = []
+    for exchange_id, symbol in EXCHANGE_CANDIDATES:
+        try:
+            exchange_class = getattr(ccxt, exchange_id)
+            exchange = exchange_class({"enableRateLimit": True, "timeout": 30000})
+            candles = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
+            if len(candles) < 300:
+                raise RuntimeError(
+                    f"{exchange_id} returned too few candles ({len(candles)})."
+                )
+            frame = pd.DataFrame(
+                candles,
+                columns=["timestamp", "open", "high", "low", "close", "volume"],
+            )
+            frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
+            print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
+            return frame
+        except Exception as exc:
+            failures.append(f"{exchange_id}: {exc}")
+            print(f"Exchange fallback failed for {exchange_id}: {exc}")
 
-    frame = pd.DataFrame(
-        candles,
-        columns=["timestamp", "open", "high", "low", "close", "volume"],
+    raise RuntimeError(
+        "Could not fetch BTC/USDT candles from any configured exchange. "
+        + " | ".join(failures)
     )
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
-    return frame
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -899,4 +916,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"Fatal error: {exc}")
+        traceback.print_exc()
+        raise
