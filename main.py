@@ -690,10 +690,13 @@ def get_current_champion(
     except Exception:
         return None, None
 
-    local_dir = mlflow.artifacts.download_artifacts(
-        model_uri=f"models:/{registered_model_name}@champion"
-    )
-    candidate = load_candidate_package(Path(local_dir) / "artifacts" / "model_dir")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_model_dir = client.download_artifacts(
+            version.run_id,
+            "model/artifacts/model_dir",
+            temp_dir,
+        )
+        candidate = load_candidate_package(local_model_dir)
     metadata = {"version": version.version, "run_id": version.run_id}
     return candidate, metadata
 
