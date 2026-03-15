@@ -61,10 +61,18 @@ def set_seed(seed: int = SEED) -> None:
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 
+def get_env_str(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
 def configure_tracking() -> str:
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
-    username = os.getenv("MLFLOW_TRACKING_USERNAME")
-    password = os.getenv("MLFLOW_TRACKING_PASSWORD")
+    tracking_uri = get_env_str("MLFLOW_TRACKING_URI")
+    username = get_env_str("MLFLOW_TRACKING_USERNAME")
+    password = get_env_str("MLFLOW_TRACKING_PASSWORD")
 
     if not tracking_uri:
         raise RuntimeError("MLFLOW_TRACKING_URI is required.")
@@ -74,8 +82,9 @@ def configure_tracking() -> str:
         raise RuntimeError("MLFLOW_TRACKING_PASSWORD is required.")
 
     mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT", DEFAULT_EXPERIMENT))
-    return os.getenv("MLFLOW_MODEL_NAME", DEFAULT_MODEL_NAME)
+    experiment_name = get_env_str("MLFLOW_EXPERIMENT") or DEFAULT_EXPERIMENT
+    mlflow.set_experiment(experiment_name)
+    return get_env_str("MLFLOW_MODEL_NAME") or DEFAULT_MODEL_NAME
 
 
 def fetch_ohlcv(limit: int = LOOKBACK_HOURS) -> pd.DataFrame:
