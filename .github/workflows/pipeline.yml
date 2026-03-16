@@ -2,7 +2,7 @@ name: BTC Directional Tournament
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -48,6 +48,49 @@ jobs:
       - name: Validate previous prediction and refresh dashboard
         run: python validate_dashboard.py
 
+      - name: Decide whether to run this hour
+        id: hourly_gate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run_tournament=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          expected_target=$(python - <<'PY'
+from datetime import datetime, timezone, timedelta
+now = datetime.now(timezone.utc)
+target = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+print(target.isoformat())
+PY
+)
+
+          saved_target=$(python - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("last_prediction.json")
+if not path.exists():
+    print("")
+else:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        print(payload.get("target_candle_timestamp", ""))
+    except Exception:
+        print("")
+PY
+)
+
+          echo "expected_target=$expected_target"
+          echo "saved_target=$saved_target"
+
+          if [ -n "$saved_target" ] && [ "$saved_target" = "$expected_target" ]; then
+            echo "run_tournament=false" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run already exists for this target candle. Skipping tournament."
+          else
+            echo "run_tournament=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Commit dashboard artifacts
         if: always()
         run: |
@@ -62,6 +105,7 @@ jobs:
       - name: Run directional tournament
         id: tournament
         continue-on-error: true
+        if: steps.hourly_gate.outputs.run_tournament == 'true'
         run: python main.py
 
       - name: Commit latest prediction metadata
@@ -76,5 +120,5 @@ jobs:
           fi
 
       - name: Fail job if tournament failed
-        if: steps.tournament.outcome == 'failure'
+        if: steps.hourly_gate.outputs.run_tournament == 'true' && steps.tournament.outcome == 'failure'
         run: exit 1
