@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import matplotlib
 
@@ -23,6 +24,7 @@ import main as tournament
 HISTORY_PATH = Path("history.csv")
 DASHBOARD_PATH = Path("assets/dashboard.png")
 LOCAL_LAST_PREDICTION_PATH = Path("last_prediction.json")
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def configure_tracking() -> tuple[MlflowClient, str, str]:
@@ -157,6 +159,19 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def format_dual_time(value: Any) -> str:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    eastern = timestamp.tz_convert(EASTERN_TZ)
+    return (
+        f"{timestamp.strftime('%m-%d %H:%M')} UTC\n"
+        f"{eastern.strftime('%m-%d %I:%M %p')} ET"
+    )
+
+
 def render_dashboard(
     history: pd.DataFrame,
     stats: dict[str, int],
@@ -283,7 +298,7 @@ def render_dashboard(
 
         recent_rows = [
             [
-                pd.Timestamp(row["timestamp"]).strftime("%m-%d %H:%M"),
+                format_dual_time(row["timestamp"]),
                 to_arrow(row["predicted"]),
                 to_arrow(row["actual"]),
                 to_result(row),
@@ -352,7 +367,7 @@ def render_dashboard(
             signal_color = "#6c757d"
         target_time = prediction_record.get("target_candle_timestamp", "--")
         if target_time != "--":
-            target_time = pd.Timestamp(target_time).strftime("%m-%d %H:%M UTC")
+            target_time = format_dual_time(target_time)
         next_rows = [
             ["Target Time", target_time],
             ["Signal", signal],
