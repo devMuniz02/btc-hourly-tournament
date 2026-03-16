@@ -116,6 +116,12 @@ def commit_artifacts(commit_message: str) -> None:
 
 
 def push_current_head() -> None:
+    pull_result = run_git_command("pull", "--rebase", "origin", "main")
+    if pull_result.returncode != 0:
+        print(pull_result.stdout, end="")
+        print(pull_result.stderr, end="")
+        raise RuntimeError("Failed to rebase local artifacts onto origin/main.")
+
     push_result = run_git_command("push", "origin", "HEAD:main")
     if push_result.returncode != 0:
         print(push_result.stdout, end="")
@@ -154,7 +160,7 @@ def main() -> int:
     validate_exit_code = run_python_script("validate_dashboard.py")
 
     if not args.skip_git:
-        commit_artifacts("Update BTC validation dashboard [skip ci]")
+        commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
         if not args.skip_push:
             push_current_head()
 
@@ -166,7 +172,7 @@ def main() -> int:
         tournament_exit_code = run_python_script("main.py")
 
     if not args.skip_git:
-        commit_artifacts("Update BTC bot artifacts [skip ci]")
+        commit_artifacts("Local run: update BTC bot artifacts [skip ci]")
         if not args.skip_push:
             push_current_head()
 

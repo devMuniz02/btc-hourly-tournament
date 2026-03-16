@@ -93,6 +93,7 @@ def fetch_ohlcv(
     limit: int = LOOKBACK_HOURS,
     min_candles: int | None = None,
     retry_binanceus: bool = False,
+    retry_binanceus_attempts: int = 3,
     retry_interval_seconds: int = 60,
 ) -> pd.DataFrame:
     failures: list[str] = []
@@ -140,11 +141,11 @@ def fetch_ohlcv(
             attempts += 1
             failures.append(f"{exchange_id}:{symbol}: {exc}")
             print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
-            if not retry_binanceus:
+            if not retry_binanceus or attempts >= retry_binanceus_attempts:
                 break
             print(
                 f"Retrying {exchange_id} {symbol} in {retry_interval_seconds} seconds "
-                f"(attempt {attempts})."
+                f"(attempt {attempts + 1} of {retry_binanceus_attempts})."
             )
             time.sleep(retry_interval_seconds)
 
@@ -931,6 +932,7 @@ def main() -> None:
         limit=LOOKBACK_HOURS,
         min_candles=1000,
         retry_binanceus=True,
+        retry_binanceus_attempts=3,
     )
     featured = add_features(raw)
     train_df, valid_df, future_row = split_dataset(featured, VALIDATION_HOURS)
