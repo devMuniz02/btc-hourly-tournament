@@ -126,56 +126,98 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
             "last_24h_predictions": 0,
             "last_24h_correct": 0,
             "last_24h_failed": 0,
+            "total_accuracy_pct": 0.0,
+            "last_24h_accuracy_pct": 0.0,
         }
 
     now = pd.Timestamp.utcnow()
     last_24h_cutoff = now - pd.Timedelta(hours=24)
     recent = history[history["timestamp"] >= last_24h_cutoff]
+    total_predictions = int(len(history))
+    total_correct = int(history["result"].sum())
+    total_failed = int(history["failed"].sum())
+    last_24h_predictions = int(len(recent))
+    last_24h_correct = int(recent["result"].sum())
+    last_24h_failed = int(recent["failed"].sum())
+    total_scored = max(total_predictions - total_failed, 0)
+    last_24h_scored = max(last_24h_predictions - last_24h_failed, 0)
     return {
-        "total_predictions": int(len(history)),
-        "total_correct": int(history["result"].sum()),
-        "total_failed": int(history["failed"].sum()),
-        "last_24h_predictions": int(len(recent)),
-        "last_24h_correct": int(recent["result"].sum()),
-        "last_24h_failed": int(recent["failed"].sum()),
+        "total_predictions": total_predictions,
+        "total_correct": total_correct,
+        "total_failed": total_failed,
+        "last_24h_predictions": last_24h_predictions,
+        "last_24h_correct": last_24h_correct,
+        "last_24h_failed": last_24h_failed,
+        "total_accuracy_pct": (
+            (total_correct / total_scored) * 100 if total_scored else 0.0
+        ),
+        "last_24h_accuracy_pct": (
+            (last_24h_correct / last_24h_scored) * 100 if last_24h_scored else 0.0
+        ),
     }
 
 
 def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
-    if history.empty:
-        recent_correct = 0
-        recent_incorrect = 0
-        recent_failed = 0
-    else:
-        now = pd.Timestamp.utcnow()
-        last_24h_cutoff = now - pd.Timedelta(hours=24)
-        recent = history[history["timestamp"] >= last_24h_cutoff]
-        recent_correct = int(recent["result"].sum())
-        recent_failed = int(recent["failed"].sum())
-        recent_incorrect = int(len(recent) - recent_correct - recent_failed)
-
     fig, (ax_chart, ax_table) = plt.subplots(
-        1, 2, figsize=(12, 5), gridspec_kw={"width_ratios": [1.4, 1]}
+        1, 2, figsize=(14, 6), gridspec_kw={"width_ratios": [1.8, 1]}
     )
     fig.patch.set_facecolor("#f7f3eb")
 
-    ax_chart.bar(
-        ["Correct", "Incorrect", "Failed"],
-        [recent_correct, recent_incorrect, recent_failed],
-        color=["#2d6a4f", "#bc4749", "#6c757d"],
-        width=0.55,
+    ax_chart.axis("off")
+    ax_chart.set_title("10 Most Recent Predictions", fontsize=14, weight="bold", pad=12)
+
+    if history.empty:
+        recent_rows = [["--", "--", "--", "--"]]
+    else:
+        recent_history = history.sort_values("timestamp", ascending=False).head(10).copy()
+
+        def to_arrow(value: Any) -> str:
+            if value == "" or pd.isna(value):
+                return "--"
+            if isinstance(value, str):
+                if value.upper() == "FAILED":
+                    return "FAILED"
+                try:
+                    value = int(value)
+                except ValueError:
+                    return value
+            return "↑" if int(value) == 1 else "↓"
+
+        def to_result(row: pd.Series) -> str:
+            if int(row["failed"]) == 1:
+                return "FAILED"
+            return "OK" if int(row["result"]) == 1 else "MISS"
+
+        recent_rows = [
+            [
+                pd.Timestamp(row["timestamp"]).strftime("%m-%d %H:%M"),
+                to_arrow(row["predicted"]),
+                to_arrow(row["actual"]),
+                to_result(row),
+            ]
+            for _, row in recent_history.iterrows()
+        ]
+
+    recent_table = ax_chart.table(
+        cellText=recent_rows,
+        colLabels=["Time", "Pred", "Actual", "Result"],
+        loc="center",
+        cellLoc="center",
+        colLoc="center",
     )
-    ax_chart.set_title("Last 24 Hours", fontsize=14, weight="bold")
-    ax_chart.set_ylabel("Predictions")
-    ax_chart.grid(axis="y", alpha=0.25)
+    recent_table.scale(1, 2)
+    recent_table.auto_set_font_size(False)
+    recent_table.set_fontsize(11)
 
     ax_table.axis("off")
     table_rows = [
         ["Total Predictions", stats["total_predictions"]],
         ["Total Correct", stats["total_correct"]],
+        ["Total Accuracy %", f"{stats['total_accuracy_pct']:.1f}%"],
         ["Total Failed", stats["total_failed"]],
         ["Last 24h Predictions", stats["last_24h_predictions"]],
         ["Last 24h Correct", stats["last_24h_correct"]],
+        ["Last 24h Accuracy %", f"{stats['last_24h_accuracy_pct']:.1f}%"],
         ["Last 24h Failed", stats["last_24h_failed"]],
     ]
     table = ax_table.table(
