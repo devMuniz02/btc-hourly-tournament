@@ -57,29 +57,8 @@ jobs:
             exit 0
           fi
 
-          expected_target=$(python - <<'PY'
-from datetime import datetime, timezone, timedelta
-now = datetime.now(timezone.utc)
-target = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-print(target.isoformat())
-PY
-)
-
-          saved_target=$(python - <<'PY'
-import json
-from pathlib import Path
-
-path = Path("last_prediction.json")
-if not path.exists():
-    print("")
-else:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        print(payload.get("target_candle_timestamp", ""))
-    except Exception:
-        print("")
-PY
-)
+          expected_target=$(python -c "from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); target=now.replace(minute=0, second=0, microsecond=0)+timedelta(hours=1); print(target.isoformat())")
+          saved_target=$(python -c "import json; from pathlib import Path; path=Path('last_prediction.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('target_candle_timestamp',''))")
 
           echo "expected_target=$expected_target"
           echo "saved_target=$saved_target"
