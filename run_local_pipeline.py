@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+GIT_DIR = ROOT / ".git"
 LAST_PREDICTION_PATH = ROOT / "last_prediction.json"
 ARTIFACT_FILES = [
     ROOT / "history.csv",
@@ -102,6 +103,15 @@ def run_git_command(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def rebase_in_progress() -> bool:
+    return (GIT_DIR / "rebase-merge").exists() or (GIT_DIR / "rebase-apply").exists()
+
+
+def worktree_clean() -> bool:
+    status = run_git_command("status", "--porcelain")
+    return not status.stdout.strip()
+
+
 def has_non_artifact_worktree_changes() -> bool:
     status = run_git_command("status", "--porcelain")
     artifact_paths = {str(path.relative_to(ROOT)).replace("\\", "/") for path in ARTIFACT_FILES}
@@ -144,6 +154,27 @@ def push_current_head() -> None:
     if has_non_artifact_worktree_changes():
         print("Skipping push because the working tree has non-artifact local changes.")
         return
+    if rebase_in_progress():
+        print("Detected an in-progress git rebase.")
+        if worktree_clean():
+            continue_result = run_git_command("rebase", "--continue")
+            if continue_result.returncode == 0:
+                if continue_result.stdout.strip():
+                    print(continue_result.stdout, end="")
+                if continue_result.stderr.strip():
+                    print(continue_result.stderr, end="")
+            else:
+                abort_result = run_git_command("rebase", "--abort")
+                if abort_result.returncode != 0:
+                    print(continue_result.stdout, end="")
+                    print(continue_result.stderr, end="")
+                    print(abort_result.stdout, end="")
+                    print(abort_result.stderr, end="")
+                    raise RuntimeError("Failed to recover from an existing git rebase.")
+                print("Aborted stale git rebase before pushing artifacts.")
+        else:
+            print("Skipping push because a git rebase is already in progress with local changes.")
+            return
     pull_result = run_git_command("pull", "--rebase", "origin", "main")
     if pull_result.returncode != 0:
         print(pull_result.stdout, end="")
