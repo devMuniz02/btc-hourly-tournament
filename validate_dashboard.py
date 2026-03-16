@@ -158,13 +158,98 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
 
 
 def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
-    fig, (ax_chart, ax_table) = plt.subplots(
-        1, 2, figsize=(14, 6), gridspec_kw={"width_ratios": [1.8, 1]}
+    fig = plt.figure(figsize=(15, 8), facecolor="#f4efe6")
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=[2.0, 1],
+        height_ratios=[1.15, 1.85],
+        hspace=0.25,
+        wspace=0.18,
     )
-    fig.patch.set_facecolor("#f7f3eb")
+    ax_trend = fig.add_subplot(grid[0, 0])
+    ax_chart = fig.add_subplot(grid[1, 0])
+    ax_table = fig.add_subplot(grid[:, 1])
+    fig.patch.set_facecolor("#f4efe6")
+    ax_trend.set_facecolor("#fbf8f2")
+    ax_chart.set_facecolor("#fbf8f2")
+    ax_table.set_facecolor("#fbf8f2")
+
+    ax_trend.set_title("Recent Accuracy Trend", fontsize=15, weight="bold", pad=12)
+    if history.empty:
+        ax_trend.text(
+            0.5,
+            0.5,
+            "No validation history yet",
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="#6c757d",
+            transform=ax_trend.transAxes,
+        )
+        ax_trend.set_xticks([])
+        ax_trend.set_yticks([])
+        for spine in ax_trend.spines.values():
+            spine.set_visible(False)
+    else:
+        trend_history = history.sort_values("timestamp").tail(20).copy()
+        scored = trend_history[trend_history["failed"] == 0].copy()
+        if scored.empty:
+            ax_trend.text(
+                0.5,
+                0.5,
+                "Only failed runs in recent history",
+                ha="center",
+                va="center",
+                fontsize=12,
+                color="#6c757d",
+                transform=ax_trend.transAxes,
+            )
+            ax_trend.set_xticks([])
+            ax_trend.set_yticks([])
+            for spine in ax_trend.spines.values():
+                spine.set_visible(False)
+        else:
+            scored["rolling_accuracy"] = scored["result"].rolling(
+                window=min(5, len(scored)),
+                min_periods=1,
+            ).mean() * 100
+            x_labels = [
+                pd.Timestamp(ts).strftime("%m-%d %H:%M") for ts in scored["timestamp"]
+            ]
+            point_colors = [
+                "#1b7f4a" if int(result) == 1 else "#c44536"
+                for result in scored["result"]
+            ]
+            ax_trend.plot(
+                x_labels,
+                scored["rolling_accuracy"],
+                color="#1f3c4d",
+                linewidth=2.5,
+                marker="o",
+                markersize=0,
+                zorder=2,
+            )
+            ax_trend.scatter(
+                x_labels,
+                scored["rolling_accuracy"],
+                c=point_colors,
+                s=55,
+                edgecolors="#fbf8f2",
+                linewidths=1.0,
+                zorder=3,
+            )
+            ax_trend.axhline(50, color="#c9bba7", linestyle="--", linewidth=1.2)
+            ax_trend.set_ylim(0, 100)
+            ax_trend.set_ylabel("Accuracy %")
+            ax_trend.tick_params(axis="x", rotation=35, labelsize=9)
+            ax_trend.tick_params(axis="y", labelsize=9)
+            ax_trend.grid(axis="y", alpha=0.18)
+            for spine in ax_trend.spines.values():
+                spine.set_color("#d8cbb8")
 
     ax_chart.axis("off")
-    ax_chart.set_title("10 Most Recent Predictions", fontsize=14, weight="bold", pad=12)
+    ax_chart.set_title("10 Most Recent Predictions", fontsize=15, weight="bold", pad=14)
 
     if history.empty:
         recent_rows = [["--", "--", "--", "--"]]
@@ -181,7 +266,7 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
                     value = int(value)
                 except ValueError:
                     return value
-            return "↑" if int(value) == 1 else "↓"
+            return "▲ UP" if int(value) == 1 else "▼ DOWN"
 
         def to_result(row: pd.Series) -> str:
             if int(row["failed"]) == 1:
@@ -207,7 +292,36 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
     )
     recent_table.scale(1, 2)
     recent_table.auto_set_font_size(False)
-    recent_table.set_fontsize(11)
+    recent_table.set_fontsize(10.5)
+
+    for (row_idx, col_idx), cell in recent_table.get_celld().items():
+        cell.set_edgecolor("#d8cbb8")
+        if row_idx == 0:
+            cell.set_facecolor("#1f3c4d")
+            cell.set_text_props(color="white", weight="bold")
+            continue
+
+        cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
+        text_value = cell.get_text().get_text()
+
+        if col_idx in {1, 2}:
+            if "UP" in text_value:
+                cell.set_text_props(color="#1b7f4a", weight="bold")
+            elif "DOWN" in text_value:
+                cell.set_text_props(color="#c44536", weight="bold")
+            elif "FAILED" in text_value:
+                cell.set_text_props(color="#6c757d", weight="bold")
+
+        if col_idx == 3:
+            if text_value == "OK":
+                cell.set_facecolor("#d9f2e3")
+                cell.set_text_props(color="#1b7f4a", weight="bold")
+            elif text_value == "MISS":
+                cell.set_facecolor("#f8d7da")
+                cell.set_text_props(color="#a12d2f", weight="bold")
+            elif text_value == "FAILED":
+                cell.set_facecolor("#e9ecef")
+                cell.set_text_props(color="#495057", weight="bold")
 
     ax_table.axis("off")
     table_rows = [
@@ -230,10 +344,37 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
     table.scale(1, 2)
     table.auto_set_font_size(False)
     table.set_fontsize(11)
-    ax_table.set_title("Bot Stats", fontsize=14, weight="bold", pad=12)
+    ax_table.set_title("Bot Stats", fontsize=15, weight="bold", pad=14)
 
-    fig.suptitle("BTC Directional Bot Validation Dashboard", fontsize=16, weight="bold")
-    fig.tight_layout()
+    for (row_idx, col_idx), cell in table.get_celld().items():
+        cell.set_edgecolor("#d8cbb8")
+        if row_idx == 0:
+            cell.set_facecolor("#1f3c4d")
+            cell.set_text_props(color="white", weight="bold")
+            continue
+        cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
+        if col_idx == 1:
+            value_text = str(cell.get_text().get_text())
+            if "%" in value_text:
+                pct = float(value_text.replace("%", ""))
+                color = "#1b7f4a" if pct >= 50 else "#c44536"
+                cell.set_text_props(color=color, weight="bold")
+
+    fig.suptitle(
+        "BTC Directional Bot Validation Dashboard",
+        fontsize=18,
+        weight="bold",
+        color="#1f3c4d",
+        y=0.98,
+    )
+    fig.text(
+        0.015,
+        0.02,
+        "Green = UP / correct strength   Red = DOWN / misses   Gray = failed run",
+        fontsize=10,
+        color="#5b5f66",
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 0.95])
     DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
     plt.close(fig)

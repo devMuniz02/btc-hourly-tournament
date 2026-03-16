@@ -41,13 +41,19 @@ def load_dotenv(dotenv_path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
+def log_step(message: str) -> None:
+    print(f"\n=== {message} ===", flush=True)
+
+
 def validate_required_env() -> None:
+    log_step("Validate required environment")
     missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name, "").strip()]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 
 def run_python_script(script_name: str) -> int:
+    log_step(f"Run {script_name}")
     command = [sys.executable, script_name]
     completed = subprocess.run(command, cwd=ROOT, check=False)
     return completed.returncode
@@ -66,7 +72,9 @@ def expected_target_timestamp() -> str:
 
 
 def should_run_tournament(event_name: str) -> bool:
+    log_step("Decide whether to run this hour")
     if event_name != "schedule":
+        print("Non-scheduled run requested. Forcing tournament execution.")
         return True
     record = load_prediction_record()
     saved_target = record.get("target_candle_timestamp", "")
@@ -80,6 +88,7 @@ def should_run_tournament(event_name: str) -> bool:
     if saved_target and saved_target == expected_target and saved_status == "success":
         print("Scheduled run already exists for this target candle. Skipping tournament.")
         return False
+    print("No successful run exists yet for this target candle. Running tournament.")
     return True
 
 
@@ -94,8 +103,10 @@ def run_git_command(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def commit_artifacts(commit_message: str) -> None:
+    log_step(f"Commit artifacts: {commit_message}")
     existing_files = [path for path in ARTIFACT_FILES if path.exists()]
     if not existing_files:
+        print("No artifact files exist yet. Nothing to commit.")
         return
 
     run_git_command("config", "user.name", "local-btc-bot")
@@ -106,6 +117,7 @@ def commit_artifacts(commit_message: str) -> None:
 
     staged_status = run_git_command("diff", "--cached", "--name-only")
     if not staged_status.stdout.strip():
+        print("No staged artifact changes detected.")
         return
 
     commit_result = run_git_command("commit", "-m", commit_message)
@@ -113,20 +125,29 @@ def commit_artifacts(commit_message: str) -> None:
         print(commit_result.stdout, end="")
         print(commit_result.stderr, end="")
         raise RuntimeError("Failed to commit local artifacts.")
+    print(commit_result.stdout, end="")
 
 
 def push_current_head() -> None:
+    log_step("Push artifacts to origin/main")
     pull_result = run_git_command("pull", "--rebase", "origin", "main")
     if pull_result.returncode != 0:
         print(pull_result.stdout, end="")
         print(pull_result.stderr, end="")
         raise RuntimeError("Failed to rebase local artifacts onto origin/main.")
+    if pull_result.stdout.strip():
+        print(pull_result.stdout, end="")
+    if pull_result.stderr.strip():
+        print(pull_result.stderr, end="")
 
     push_result = run_git_command("push", "origin", "HEAD:main")
     if push_result.returncode != 0:
         print(push_result.stdout, end="")
         print(push_result.stderr, end="")
         raise RuntimeError("Failed to push local artifacts to origin/main.")
+    print(push_result.stdout, end="")
+    if push_result.stderr.strip():
+        print(push_result.stderr, end="")
 
 
 def parse_args() -> argparse.Namespace:
@@ -153,6 +174,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    log_step("Load local environment")
     args = parse_args()
     load_dotenv(ROOT / ".env")
     validate_required_env()
