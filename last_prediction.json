@@ -1,14 +1,14 @@
 {
   "status": "success",
-  "generated_at": "2026-03-16T16:38:21.880745+00:00",
+  "generated_at": "2026-03-16T17:20:23.452899+00:00",
   "registered_model_name": "btc-usdt-directional-classifier",
-  "model_name": "MLPClassifier",
-  "probability_up": 1.0,
+  "model_name": "RandomForest",
+  "probability_up": 0.6011736007752831,
   "predicted_signal": "UP",
   "predicted_label": 1,
-  "reference_candle_timestamp": "2026-03-16T16:00:00+00:00",
-  "target_candle_timestamp": "2026-03-16T17:00:00+00:00",
-  "reference_close": 73414.12,
+  "reference_candle_timestamp": "2026-03-16T17:00:00+00:00",
+  "target_candle_timestamp": "2026-03-16T18:00:00+00:00",
+  "reference_close": 73824.36,
   "symbol": "BTC/USDT",
   "timeframe": "1h"
 }
