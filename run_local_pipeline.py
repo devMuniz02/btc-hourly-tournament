@@ -6,16 +6,19 @@ Run the BTC directional bot locally with the same control flow used in GitHub Ac
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
 GIT_DIR = ROOT / ".git"
+LOG_PATH = ROOT / "local_pipeline_run.txt"
 LAST_PREDICTION_PATH = ROOT / "last_prediction.json"
 ARTIFACT_FILES = [
     ROOT / "history.csv",
@@ -27,6 +30,21 @@ REQUIRED_ENV_VARS = [
     "MLFLOW_TRACKING_USERNAME",
     "MLFLOW_TRACKING_PASSWORD",
 ]
+
+
+class Tee(io.TextIOBase):
+    def __init__(self, *streams: io.TextIOBase) -> None:
+        self.streams = streams
+
+    def write(self, s: str) -> int:
+        for stream in self.streams:
+            stream.write(s)
+            stream.flush()
+        return len(s)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -56,8 +74,17 @@ def validate_required_env() -> None:
 def run_python_script(script_name: str) -> int:
     log_step(f"Run {script_name}")
     command = [sys.executable, script_name]
-    completed = subprocess.run(command, cwd=ROOT, check=False)
-    return completed.returncode
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="")
+    return process.wait()
 
 
 def load_prediction_record() -> dict[str, str]:
@@ -219,41 +246,45 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    log_step("Load local environment")
-    args = parse_args()
-    load_dotenv(ROOT / ".env")
-    validate_required_env()
+    with LOG_PATH.open("w", encoding="utf-8") as log_file:
+        tee = Tee(sys.stdout, log_file)
+        with redirect_stdout(tee), redirect_stderr(tee):
+            log_step("Load local environment")
+            print(f"Writing run log to {LOG_PATH}")
+            args = parse_args()
+            load_dotenv(ROOT / ".env")
+            validate_required_env()
 
-    validate_exit_code = run_python_script("validate_dashboard.py")
+            validate_exit_code = run_python_script("validate_dashboard.py")
 
-    run_tournament = should_run_tournament(args.event_name)
+            run_tournament = should_run_tournament(args.event_name)
 
-    if not args.skip_git:
-        committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
-        if committed and not args.skip_push and not run_tournament:
-            push_current_head()
+            if not args.skip_git:
+                committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
+                if committed and not args.skip_push and not run_tournament:
+                    push_current_head()
 
-    if validate_exit_code != 0:
-        return validate_exit_code
+            if validate_exit_code != 0:
+                return validate_exit_code
 
-    tournament_exit_code = 0
-    if run_tournament:
-        tournament_exit_code = run_python_script("main.py")
-        refresh_exit_code = run_python_script("validate_dashboard.py")
-        if refresh_exit_code != 0 and tournament_exit_code == 0:
-            tournament_exit_code = refresh_exit_code
+            tournament_exit_code = 0
+            if run_tournament:
+                tournament_exit_code = run_python_script("main.py")
+                refresh_exit_code = run_python_script("validate_dashboard.py")
+                if refresh_exit_code != 0 and tournament_exit_code == 0:
+                    tournament_exit_code = refresh_exit_code
 
-    if not args.skip_git:
-        commit_message = (
-            "Local run: update BTC bot artifacts [skip ci]"
-            if run_tournament
-            else "Local run: update BTC validation dashboard [skip ci]"
-        )
-        committed = commit_artifacts(commit_message)
-        if committed and not args.skip_push:
-            push_current_head()
+            if not args.skip_git:
+                commit_message = (
+                    "Local run: update BTC bot artifacts [skip ci]"
+                    if run_tournament
+                    else "Local run: update BTC validation dashboard [skip ci]"
+                )
+                committed = commit_artifacts(commit_message)
+                if committed and not args.skip_push:
+                    push_current_head()
 
-    return tournament_exit_code
+            return tournament_exit_code
 
 
 if __name__ == "__main__":
