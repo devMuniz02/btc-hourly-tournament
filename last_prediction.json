@@ -1,0 +1,14 @@
+{
+  "status": "success",
+  "generated_at": "2026-03-16T06:24:47.926521+00:00",
+  "registered_model_name": "btc-usdt-directional-classifier",
+  "model_name": "XGBoost",
+  "probability_up": 0.8960140347480774,
+  "predicted_signal": "UP",
+  "predicted_label": 1,
+  "reference_candle_timestamp": "2026-03-16T06:00:00+00:00",
+  "target_candle_timestamp": "2026-03-16T07:00:00+00:00",
+  "reference_close": 73668.55,
+  "symbol": "BTC/USDT",
+  "timeframe": "1h"
+}
