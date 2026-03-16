@@ -73,7 +73,7 @@ jobs:
           fi
 
       - name: Commit dashboard artifacts
-        if: always()
+        if: always() && steps.hourly_gate.outputs.run_tournament != 'true'
         run: |
           if [ -f history.csv ] || [ -f assets/dashboard.png ]; then
             git config user.name "github-actions[bot]"
@@ -91,6 +91,10 @@ jobs:
         continue-on-error: true
         if: steps.hourly_gate.outputs.run_tournament == 'true'
         run: python main.py
+
+      - name: Refresh dashboard with latest next prediction
+        if: always() && steps.hourly_gate.outputs.run_tournament == 'true'
+        run: python validate_dashboard.py
 
       - name: Commit latest prediction metadata
         if: always()

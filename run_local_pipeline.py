@@ -226,20 +226,30 @@ def main() -> int:
 
     validate_exit_code = run_python_script("validate_dashboard.py")
 
+    run_tournament = should_run_tournament(args.event_name)
+
     if not args.skip_git:
         committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
-        if committed and not args.skip_push:
+        if committed and not args.skip_push and not run_tournament:
             push_current_head()
 
     if validate_exit_code != 0:
         return validate_exit_code
 
     tournament_exit_code = 0
-    if should_run_tournament(args.event_name):
+    if run_tournament:
         tournament_exit_code = run_python_script("main.py")
+        refresh_exit_code = run_python_script("validate_dashboard.py")
+        if refresh_exit_code != 0 and tournament_exit_code == 0:
+            tournament_exit_code = refresh_exit_code
 
     if not args.skip_git:
-        committed = commit_artifacts("Local run: update BTC bot artifacts [skip ci]")
+        commit_message = (
+            "Local run: update BTC bot artifacts [skip ci]"
+            if run_tournament
+            else "Local run: update BTC validation dashboard [skip ci]"
+        )
+        committed = commit_artifacts(commit_message)
         if committed and not args.skip_push:
             push_current_head()
 
