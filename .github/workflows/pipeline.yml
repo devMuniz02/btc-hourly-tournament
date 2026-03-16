@@ -59,11 +59,13 @@ jobs:
 
           expected_target=$(python -c "from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); target=now.replace(minute=0, second=0, microsecond=0)+timedelta(hours=1); print(target.isoformat())")
           saved_target=$(python -c "import json; from pathlib import Path; path=Path('last_prediction.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('target_candle_timestamp',''))")
+          saved_status=$(python -c "import json; from pathlib import Path; path=Path('last_prediction.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('status',''))")
 
           echo "expected_target=$expected_target"
           echo "saved_target=$saved_target"
+          echo "saved_status=$saved_status"
 
-          if [ -n "$saved_target" ] && [ "$saved_target" = "$expected_target" ]; then
+          if [ -n "$saved_target" ] && [ "$saved_target" = "$expected_target" ] && [ "$saved_status" = "success" ]; then
             echo "run_tournament=false" >> "$GITHUB_OUTPUT"
             echo "Scheduled run already exists for this target candle. Skipping tournament."
           else

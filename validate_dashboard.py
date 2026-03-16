@@ -53,7 +53,7 @@ def load_last_prediction() -> dict[str, Any] | None:
 
 
 def fetch_recent_candles() -> pd.DataFrame:
-    return tournament.fetch_ohlcv(limit=8)
+    return tournament.fetch_ohlcv(limit=8, min_candles=8)
 
 
 def resolve_actual_direction(
@@ -249,7 +249,13 @@ def main() -> None:
         )
         return
 
-    candles = fetch_recent_candles()
+    try:
+        candles = fetch_recent_candles()
+    except Exception as exc:
+        stats = compute_stats(history)
+        render_dashboard(history, stats)
+        print(f"Could not fetch validation candles. Skipping validation for now: {exc}")
+        return
     actual = resolve_actual_direction(candles, prediction_record)
     if actual is None:
         stats = compute_stats(history)

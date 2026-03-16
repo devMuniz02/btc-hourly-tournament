@@ -10,6 +10,7 @@ import math
 import os
 import random
 import tempfile
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,8 +46,8 @@ LAST_PREDICTION_PATH = Path("last_prediction.json")
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
     ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
-    ("binanceus", "BTC/USDT", {}),
 ]
+BINANCE_US_CANDIDATE = ("binanceus", "BTC/USDT", {})
 FALLBACK_EXCHANGE_CANDIDATES = [
     ("kraken", "BTC/USDT", {}),
     ("okx", "BTC/USDT", {}),
@@ -88,31 +89,68 @@ def configure_tracking() -> str:
     return get_env_str("MLFLOW_MODEL_NAME") or DEFAULT_MODEL_NAME
 
 
-def fetch_ohlcv(limit: int = LOOKBACK_HOURS) -> pd.DataFrame:
+def fetch_ohlcv(
+    limit: int = LOOKBACK_HOURS,
+    min_candles: int | None = None,
+    retry_binanceus: bool = False,
+    retry_interval_seconds: int = 60,
+) -> pd.DataFrame:
     failures: list[str] = []
-    candidates = BINANCE_CANDIDATES + FALLBACK_EXCHANGE_CANDIDATES
-    for exchange_id, symbol, extra_config in candidates:
+    required_candles = min_candles if min_candles is not None else limit
+
+    def try_exchange(
+        exchange_id: str,
+        symbol: str,
+        extra_config: dict[str, Any],
+    ) -> pd.DataFrame:
+        exchange_class = getattr(ccxt, exchange_id)
+        exchange = exchange_class(
+            {
+                "enableRateLimit": True,
+                "timeout": 30000,
+                **extra_config,
+            }
+        )
+        candles = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
+        if len(candles) < required_candles:
+            raise RuntimeError(
+                f"{exchange_id} returned too few candles ({len(candles)})."
+            )
+        frame = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        )
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
+        print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
+        return frame
+
+    for exchange_id, symbol, extra_config in BINANCE_CANDIDATES:
         try:
-            exchange_class = getattr(ccxt, exchange_id)
-            exchange = exchange_class(
-                {
-                    "enableRateLimit": True,
-                    "timeout": 30000,
-                    **extra_config,
-                }
+            return try_exchange(exchange_id, symbol, extra_config)
+        except Exception as exc:
+            failures.append(f"{exchange_id}:{symbol}: {exc}")
+            print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
+
+    exchange_id, symbol, extra_config = BINANCE_US_CANDIDATE
+    attempts = 0
+    while True:
+        try:
+            return try_exchange(exchange_id, symbol, extra_config)
+        except Exception as exc:
+            attempts += 1
+            failures.append(f"{exchange_id}:{symbol}: {exc}")
+            print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
+            if not retry_binanceus:
+                break
+            print(
+                f"Retrying {exchange_id} {symbol} in {retry_interval_seconds} seconds "
+                f"(attempt {attempts})."
             )
-            candles = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
-            if len(candles) < 300:
-                raise RuntimeError(
-                    f"{exchange_id} returned too few candles ({len(candles)})."
-                )
-            frame = pd.DataFrame(
-                candles,
-                columns=["timestamp", "open", "high", "low", "close", "volume"],
-            )
-            frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
-            print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
-            return frame
+            time.sleep(retry_interval_seconds)
+
+    for exchange_id, symbol, extra_config in FALLBACK_EXCHANGE_CANDIDATES:
+        try:
+            return try_exchange(exchange_id, symbol, extra_config)
         except Exception as exc:
             failures.append(f"{exchange_id}:{symbol}: {exc}")
             print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
@@ -747,28 +785,29 @@ def evaluate_champion(
     }
 
 
-def log_challenger_runs(
+def log_challenger_summary(
     challenger_results: list[dict[str, Any]],
-    validation_start: str,
-    validation_end: str,
 ) -> None:
+    summary = []
     for result in challenger_results:
-        with mlflow.start_run(run_name=f"challenger-{result['name']}", nested=True):
-            mlflow.set_tags(
-                {
-                    "role": "challenger",
-                    "model_name": result["name"],
-                    "validation_start": validation_start,
-                    "validation_end": validation_end,
-                }
-            )
-            mlflow.log_metrics(
-                {
-                    "accuracy": result["accuracy"],
-                    "f1": result["f1"],
-                    "next_probability": result["next_probability"],
-                }
-            )
+        metric_prefix = result["name"].lower().replace(" ", "_")
+        mlflow.log_metrics(
+            {
+                f"{metric_prefix}_accuracy": result["accuracy"],
+                f"{metric_prefix}_f1": result["f1"],
+                f"{metric_prefix}_next_probability": result["next_probability"],
+            }
+        )
+        summary.append(
+            {
+                "name": result["name"],
+                "accuracy": result["accuracy"],
+                "f1": result["f1"],
+                "next_probability": result["next_probability"],
+                "next_signal": result["next_signal"],
+            }
+        )
+    mlflow.log_text(json.dumps(summary, indent=2), "challenger_summary.json")
 
 
 def promote_champion(
@@ -888,7 +927,11 @@ def main() -> None:
     registered_model_name = configure_tracking()
     client = MlflowClient()
 
-    raw = fetch_ohlcv(limit=LOOKBACK_HOURS)
+    raw = fetch_ohlcv(
+        limit=LOOKBACK_HOURS,
+        min_candles=1000,
+        retry_binanceus=True,
+    )
     featured = add_features(raw)
     train_df, valid_df, future_row = split_dataset(featured, VALIDATION_HOURS)
 
@@ -949,9 +992,14 @@ def main() -> None:
                 "lookback_hours": LOOKBACK_HOURS,
                 "validation_hours": VALIDATION_HOURS,
                 "sequence_length": SEQUENCE_LENGTH,
+                "rf_estimators": 250,
+                "xgb_estimators": 300,
+                "lstm_epochs": 14,
+                "transformer_epochs": 12,
+                "nn_epochs": 16,
             }
         )
-        log_challenger_runs(challenger_results, validation_start, validation_end)
+        log_challenger_summary(challenger_results)
         mlflow.log_text(
             json.dumps(
                 [
