@@ -192,6 +192,7 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
 
     fig.suptitle("BTC Directional Bot Validation Dashboard", fontsize=16, weight="bold")
     fig.tight_layout()
+    DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
     plt.close(fig)
 
