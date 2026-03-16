@@ -163,8 +163,8 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
         2,
         2,
         width_ratios=[2.0, 1],
-        height_ratios=[1.15, 1.85],
-        hspace=0.25,
+        height_ratios=[1.0, 1.9],
+        hspace=0.42,
         wspace=0.18,
     )
     ax_trend = fig.add_subplot(grid[0, 0])
@@ -242,7 +242,7 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
             ax_trend.axhline(50, color="#c9bba7", linestyle="--", linewidth=1.2)
             ax_trend.set_ylim(0, 100)
             ax_trend.set_ylabel("Accuracy %")
-            ax_trend.tick_params(axis="x", rotation=35, labelsize=9)
+            ax_trend.tick_params(axis="x", rotation=25, labelsize=8, pad=4)
             ax_trend.tick_params(axis="y", labelsize=9)
             ax_trend.grid(axis="y", alpha=0.18)
             for spine in ax_trend.spines.values():
