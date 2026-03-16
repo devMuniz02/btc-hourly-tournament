@@ -895,6 +895,8 @@ def build_prediction_record(
         "generated_at": pd.Timestamp.utcnow().isoformat(),
         "registered_model_name": registered_model_name,
         "model_name": active_result["candidate"].name,
+        "model_accuracy": float(active_result["accuracy"]),
+        "model_f1": float(active_result["f1"]),
         "probability_up": float(active_result["next_probability"]),
         "predicted_signal": active_result["next_signal"],
         "predicted_label": int(active_result["next_probability"] >= 0.5),

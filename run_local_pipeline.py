@@ -102,12 +102,22 @@ def run_git_command(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def commit_artifacts(commit_message: str) -> None:
+def has_non_artifact_worktree_changes() -> bool:
+    status = run_git_command("status", "--porcelain")
+    artifact_paths = {str(path.relative_to(ROOT)).replace("\\", "/") for path in ARTIFACT_FILES}
+    for line in status.stdout.splitlines():
+        path = line[3:].strip().replace("\\", "/")
+        if path and path not in artifact_paths:
+            return True
+    return False
+
+
+def commit_artifacts(commit_message: str) -> bool:
     log_step(f"Commit artifacts: {commit_message}")
     existing_files = [path for path in ARTIFACT_FILES if path.exists()]
     if not existing_files:
         print("No artifact files exist yet. Nothing to commit.")
-        return
+        return False
 
     run_git_command("config", "user.name", "local-btc-bot")
     run_git_command("config", "user.email", "local-btc-bot@users.noreply.github.com")
@@ -118,7 +128,7 @@ def commit_artifacts(commit_message: str) -> None:
     staged_status = run_git_command("diff", "--cached", "--name-only")
     if not staged_status.stdout.strip():
         print("No staged artifact changes detected.")
-        return
+        return False
 
     commit_result = run_git_command("commit", "-m", commit_message)
     if commit_result.returncode != 0:
@@ -126,10 +136,14 @@ def commit_artifacts(commit_message: str) -> None:
         print(commit_result.stderr, end="")
         raise RuntimeError("Failed to commit local artifacts.")
     print(commit_result.stdout, end="")
+    return True
 
 
 def push_current_head() -> None:
     log_step("Push artifacts to origin/main")
+    if has_non_artifact_worktree_changes():
+        print("Skipping push because the working tree has non-artifact local changes.")
+        return
     pull_result = run_git_command("pull", "--rebase", "origin", "main")
     if pull_result.returncode != 0:
         print(pull_result.stdout, end="")
@@ -182,8 +196,8 @@ def main() -> int:
     validate_exit_code = run_python_script("validate_dashboard.py")
 
     if not args.skip_git:
-        commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
-        if not args.skip_push:
+        committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
+        if committed and not args.skip_push:
             push_current_head()
 
     if validate_exit_code != 0:
@@ -194,8 +208,8 @@ def main() -> int:
         tournament_exit_code = run_python_script("main.py")
 
     if not args.skip_git:
-        commit_artifacts("Local run: update BTC bot artifacts [skip ci]")
-        if not args.skip_push:
+        committed = commit_artifacts("Local run: update BTC bot artifacts [skip ci]")
+        if committed and not args.skip_push:
             push_current_head()
 
     return tournament_exit_code

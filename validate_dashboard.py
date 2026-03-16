@@ -157,7 +157,11 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
     }
 
 
-def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
+def render_dashboard(
+    history: pd.DataFrame,
+    stats: dict[str, int],
+    prediction_record: dict[str, Any] | None,
+) -> None:
     fig = plt.figure(figsize=(15, 8), facecolor="#f4efe6")
     grid = fig.add_gridspec(
         2,
@@ -169,10 +173,13 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
     )
     ax_trend = fig.add_subplot(grid[0, 0])
     ax_chart = fig.add_subplot(grid[1, 0])
-    ax_table = fig.add_subplot(grid[:, 1])
+    right_grid = grid[:, 1].subgridspec(2, 1, height_ratios=[0.72, 1.28], hspace=0.18)
+    ax_next = fig.add_subplot(right_grid[0, 0])
+    ax_table = fig.add_subplot(right_grid[1, 0])
     fig.patch.set_facecolor("#f4efe6")
     ax_trend.set_facecolor("#fbf8f2")
     ax_chart.set_facecolor("#fbf8f2")
+    ax_next.set_facecolor("#fbf8f2")
     ax_table.set_facecolor("#fbf8f2")
 
     ax_trend.set_title("Recent Accuracy Trend", fontsize=15, weight="bold", pad=12)
@@ -240,7 +247,8 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
                 zorder=3,
             )
             ax_trend.axhline(50, color="#c9bba7", linestyle="--", linewidth=1.2)
-            ax_trend.set_ylim(0, 100)
+            ax_trend.set_ylim(-10, 110)
+            ax_trend.set_yticks([0, 20, 40, 60, 80, 100])
             ax_trend.set_ylabel("Accuracy %")
             ax_trend.tick_params(axis="x", rotation=25, labelsize=8, pad=4)
             ax_trend.tick_params(axis="y", labelsize=9)
@@ -323,6 +331,65 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
                 cell.set_facecolor("#e9ecef")
                 cell.set_text_props(color="#495057", weight="bold")
 
+    ax_next.axis("off")
+    ax_next.set_title("Next Prediction", fontsize=15, weight="bold", pad=14)
+
+    if not prediction_record:
+        next_rows = [
+            ["Target Time", "--"],
+            ["Signal", "--"],
+            ["Probability", "--"],
+            ["Model", "--"],
+            ["Accuracy", "--"],
+            ["F1", "--"],
+        ]
+        signal_color = "#6c757d"
+    else:
+        signal = prediction_record.get("predicted_signal", "--")
+        signal_color = "#1b7f4a" if signal == "UP" else "#c44536"
+        if prediction_record.get("status") == "failed":
+            signal = "FAILED"
+            signal_color = "#6c757d"
+        target_time = prediction_record.get("target_candle_timestamp", "--")
+        if target_time != "--":
+            target_time = pd.Timestamp(target_time).strftime("%m-%d %H:%M UTC")
+        next_rows = [
+            ["Target Time", target_time],
+            ["Signal", signal],
+            ["Probability", f"{float(prediction_record.get('probability_up', 0.0)):.1%}"],
+            ["Model", prediction_record.get("model_name", "--")],
+            ["Accuracy", f"{float(prediction_record.get('model_accuracy', 0.0)):.3f}"],
+            ["F1", f"{float(prediction_record.get('model_f1', 0.0)):.3f}"],
+        ]
+
+    next_table = ax_next.table(
+        cellText=next_rows,
+        colLabels=["Field", "Value"],
+        loc="center",
+        cellLoc="left",
+        colLoc="left",
+    )
+    next_table.scale(1, 1.65)
+    next_table.auto_set_font_size(False)
+    next_table.set_fontsize(10.5)
+
+    for (row_idx, col_idx), cell in next_table.get_celld().items():
+        cell.set_edgecolor("#d8cbb8")
+        if row_idx == 0:
+            cell.set_facecolor("#1f3c4d")
+            cell.set_text_props(color="white", weight="bold")
+            continue
+        cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
+        if col_idx == 1:
+            value_text = str(cell.get_text().get_text())
+            if row_idx == 2:
+                cell.set_facecolor("#e9f5ec" if signal_color == "#1b7f4a" else "#f8d7da")
+                cell.set_text_props(color=signal_color, weight="bold")
+            elif row_idx == 3:
+                cell.set_text_props(color="#1f3c4d", weight="bold")
+            elif value_text.endswith("%"):
+                cell.set_text_props(color=signal_color, weight="bold")
+
     ax_table.axis("off")
     table_rows = [
         ["Total Predictions", stats["total_predictions"]],
@@ -374,7 +441,7 @@ def render_dashboard(history: pd.DataFrame, stats: dict[str, int]) -> None:
         fontsize=10,
         color="#5b5f66",
     )
-    fig.tight_layout(rect=[0, 0.04, 1, 0.95])
+    fig.subplots_adjust(left=0.05, right=0.98, top=0.88, bottom=0.12)
     DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -388,7 +455,7 @@ def main() -> None:
     history = load_history()
     if prediction_record is None:
         stats = compute_stats(history)
-        render_dashboard(history, stats)
+        render_dashboard(history, stats, prediction_record)
         print(
             "No local last_prediction.json found. "
             "Skipping validation and refreshing the dashboard with existing history only."
@@ -397,7 +464,7 @@ def main() -> None:
 
     if prediction_already_recorded(history, prediction_record):
         stats = compute_stats(history)
-        render_dashboard(history, stats)
+        render_dashboard(history, stats, prediction_record)
         print(
             f"Prediction for {get_prediction_timestamp(prediction_record).isoformat()} "
             "is already recorded. Skipping duplicate validation."
@@ -419,7 +486,7 @@ def main() -> None:
             },
         )
         stats = compute_stats(history)
-        render_dashboard(history, stats)
+        render_dashboard(history, stats, prediction_record)
         print(
             "Prediction run previously failed:",
             json.dumps(
@@ -436,13 +503,13 @@ def main() -> None:
         candles = fetch_recent_candles()
     except Exception as exc:
         stats = compute_stats(history)
-        render_dashboard(history, stats)
+        render_dashboard(history, stats, prediction_record)
         print(f"Could not fetch validation candles. Skipping validation for now: {exc}")
         return
     actual = resolve_actual_direction(candles, prediction_record)
     if actual is None:
         stats = compute_stats(history)
-        render_dashboard(history, stats)
+        render_dashboard(history, stats, prediction_record)
         print("Target candle is not available yet. Dashboard refreshed without new validation row.")
         return
 
@@ -462,7 +529,7 @@ def main() -> None:
         },
     )
     stats = compute_stats(history)
-    render_dashboard(history, stats)
+    render_dashboard(history, stats, prediction_record)
 
     print(
         "Validation complete:",
