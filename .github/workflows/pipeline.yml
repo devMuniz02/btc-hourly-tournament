@@ -73,12 +73,14 @@ jobs:
       - name: Commit dashboard artifacts
         if: always()
         run: |
-          if [ -n "$(git status --porcelain -- history.csv assets/dashboard.png)" ]; then
+          if [ -f history.csv ] || [ -f assets/dashboard.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add history.csv assets/dashboard.png
-            git commit -m "Update BTC validation dashboard [skip ci]"
-            git push origin HEAD:main
+            git add -A history.csv assets/dashboard.png
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -m "Update BTC validation dashboard [skip ci]"
+              git push origin HEAD:main
+            fi
           fi
 
       - name: Run directional tournament
@@ -90,12 +92,14 @@ jobs:
       - name: Commit latest prediction metadata
         if: always()
         run: |
-          if [ -n "$(git status --porcelain -- last_prediction.json history.csv assets/dashboard.png)" ]; then
+          if [ -f last_prediction.json ] || [ -f history.csv ] || [ -f assets/dashboard.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add last_prediction.json history.csv assets/dashboard.png
-            git commit -m "Update BTC bot artifacts [skip ci]"
-            git push origin HEAD:main
+            git add -A last_prediction.json history.csv assets/dashboard.png
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -m "Update BTC bot artifacts [skip ci]"
+              git push origin HEAD:main
+            fi
           fi
 
       - name: Fail job if tournament failed
