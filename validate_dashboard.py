@@ -80,18 +80,41 @@ def resolve_actual_direction(
 def load_history() -> pd.DataFrame:
     if not HISTORY_PATH.exists():
         return pd.DataFrame(
-            columns=["timestamp", "predicted", "actual", "result", "failed", "status"]
+            columns=[
+                "timestamp",
+                "predicted",
+                "actual",
+                "result",
+                "failed",
+                "status",
+                "reference_open",
+                "reference_close",
+                "target_close",
+            ]
         )
     history = pd.read_csv(HISTORY_PATH)
     if history.empty:
         return pd.DataFrame(
-            columns=["timestamp", "predicted", "actual", "result", "failed", "status"]
+            columns=[
+                "timestamp",
+                "predicted",
+                "actual",
+                "result",
+                "failed",
+                "status",
+                "reference_open",
+                "reference_close",
+                "target_close",
+            ]
         )
     history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True)
     if "failed" not in history.columns:
         history["failed"] = 0
     if "status" not in history.columns:
         history["status"] = "validated"
+    for column in ["reference_open", "reference_close", "target_close"]:
+        if column not in history.columns:
+            history[column] = pd.NA
     return history
 
 
@@ -275,7 +298,7 @@ def render_dashboard(
     ax_chart.set_title("10 Most Recent Predictions", fontsize=15, weight="bold", pad=14)
 
     if history.empty:
-        recent_rows = [["--", "--", "--", "--"]]
+        recent_rows = [["--", "--", "--", "--", "--", "--"]]
     else:
         recent_history = history.sort_values("timestamp", ascending=False).head(10).copy()
 
@@ -299,6 +322,16 @@ def render_dashboard(
         recent_rows = [
             [
                 format_dual_time(row["timestamp"]),
+                (
+                    f"{float(row['reference_open']):,.2f}"
+                    if pd.notna(row["reference_open"])
+                    else "--"
+                ),
+                (
+                    f"{float(row['reference_close']):,.2f}"
+                    if pd.notna(row["reference_close"])
+                    else "--"
+                ),
                 to_arrow(row["predicted"]),
                 to_arrow(row["actual"]),
                 to_result(row),
@@ -308,7 +341,7 @@ def render_dashboard(
 
     recent_table = ax_chart.table(
         cellText=recent_rows,
-        colLabels=["Time", "Pred", "Actual", "Result"],
+        colLabels=["Time", "Open", "Close", "Pred", "Actual", "Result"],
         loc="center",
         cellLoc="center",
         colLoc="center",
@@ -498,6 +531,9 @@ def main() -> None:
                 "result": 0,
                 "failed": 1,
                 "status": "failed",
+                "reference_open": prediction_record.get("reference_open"),
+                "reference_close": prediction_record.get("reference_close"),
+                "target_close": pd.NA,
             },
         )
         stats = compute_stats(history)
@@ -541,6 +577,9 @@ def main() -> None:
             "result": result,
             "failed": 0,
             "status": "validated",
+            "reference_open": prediction_record.get("reference_open"),
+            "reference_close": reference_close,
+            "target_close": target_close,
         },
     )
     stats = compute_stats(history)

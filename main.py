@@ -902,6 +902,7 @@ def build_prediction_record(
         "predicted_label": int(active_result["next_probability"] >= 0.5),
         "reference_candle_timestamp": reference_timestamp.isoformat(),
         "target_candle_timestamp": target_timestamp.isoformat(),
+        "reference_open": float(future_row["open"].iloc[0]),
         "reference_close": float(future_row["close"].iloc[0]),
         "symbol": SYMBOL,
         "timeframe": TIMEFRAME,
