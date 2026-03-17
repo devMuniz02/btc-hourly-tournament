@@ -165,6 +165,55 @@ def remove_incomplete_validations(history: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
+def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.DataFrame:
+    now_utc = pd.Timestamp.now(tz="UTC")
+    latest_available_target = now_utc.floor("h")
+    expected_timestamps = [
+        latest_available_target - pd.Timedelta(hours=offset)
+        for offset in range(hours)
+    ]
+
+    updated = history.copy()
+    existing_timestamps = set()
+    if not updated.empty:
+        existing_timestamps = {
+            pd.Timestamp(ts).tz_convert("UTC") if pd.Timestamp(ts).tzinfo else pd.Timestamp(ts).tz_localize("UTC")
+            for ts in updated["timestamp"]
+        }
+
+    missing_rows: list[dict[str, Any]] = []
+    for target_ts in expected_timestamps:
+        if target_ts in existing_timestamps:
+            continue
+        missing_rows.append(
+            {
+                "timestamp": target_ts,
+                "predicted": "",
+                "actual": "",
+                "result": "",
+                "failed": 0,
+                "status": "missing",
+                "reference_open": pd.NA,
+                "reference_close": pd.NA,
+                "target_open": pd.NA,
+                "target_close": pd.NA,
+            }
+        )
+
+    if not missing_rows:
+        return updated
+
+    missing_frame = pd.DataFrame(missing_rows)
+    if updated.empty:
+        updated = missing_frame
+    else:
+        missing_frame = missing_frame.reindex(columns=updated.columns)
+        updated = pd.concat([updated, missing_frame], ignore_index=True)
+    updated = updated.sort_values("timestamp").reset_index(drop=True)
+    updated.to_csv(HISTORY_PATH, index=False)
+    return updated
+
+
 def compute_stats(history: pd.DataFrame) -> dict[str, int]:
     if history.empty:
         return {
@@ -180,13 +229,17 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
 
     now = pd.Timestamp.utcnow()
     last_24h_cutoff = now - pd.Timedelta(hours=24)
-    recent = history[history["timestamp"] >= last_24h_cutoff]
-    total_predictions = int(len(history))
-    total_correct = int(history["result"].sum())
-    total_failed = int(history["failed"].sum())
+    counted = history[
+        (history["status"] != "missing")
+        & (history["predicted"].fillna("").astype(str) != "")
+    ]
+    recent = counted[counted["timestamp"] >= last_24h_cutoff]
+    total_predictions = int(len(counted))
+    total_correct = int(pd.to_numeric(counted["result"], errors="coerce").fillna(0).sum())
+    total_failed = int(pd.to_numeric(counted["failed"], errors="coerce").fillna(0).sum())
     last_24h_predictions = int(len(recent))
-    last_24h_correct = int(recent["result"].sum())
-    last_24h_failed = int(recent["failed"].sum())
+    last_24h_correct = int(pd.to_numeric(recent["result"], errors="coerce").fillna(0).sum())
+    last_24h_failed = int(pd.to_numeric(recent["failed"], errors="coerce").fillna(0).sum())
     total_scored = max(total_predictions - total_failed, 0)
     last_24h_scored = max(last_24h_predictions - last_24h_failed, 0)
     return {
@@ -267,22 +320,33 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
     updated = history.copy()
     changed = False
     for idx, row in updated.iterrows():
-        if int(row.get("failed", 0)) == 1 or str(row.get("status", "")) != "validated":
+        if int(row.get("failed", 0)) == 1:
             continue
         if pd.isna(row["reference_open"]) or pd.isna(row["target_open"]):
             continue
 
         actual_label = int(float(row["target_open"]) > float(row["reference_open"]))
         predicted_value = row["predicted"]
-        if pd.isna(predicted_value) or str(predicted_value).upper() == "FAILED":
+        predicted_text = "" if pd.isna(predicted_value) else str(predicted_value).strip()
+        if pd.isna(row["actual"]) or str(row["actual"]).strip() == "" or int(float(row["actual"])) != actual_label:
+            updated.at[idx, "actual"] = actual_label
+            changed = True
+
+        if predicted_text == "" or predicted_text.upper() == "FAILED":
+            if str(row.get("status", "")) == "validated" and (pd.isna(row["result"]) or str(row["result"]).strip() == ""):
+                continue
+            if str(row.get("status", "")) == "missing":
+                continue
             continue
 
         predicted_label = int(predicted_value)
         result = int(predicted_label == actual_label)
 
-        if int(row["actual"]) != actual_label or int(row["result"]) != result:
-            updated.at[idx, "actual"] = actual_label
+        current_result = row["result"]
+        if pd.isna(current_result) or str(current_result).strip() == "" or int(float(current_result)) != result:
             updated.at[idx, "result"] = result
+            if str(row.get("status", "")) == "missing":
+                updated.at[idx, "status"] = "validated"
             changed = True
 
     if changed:
@@ -328,7 +392,7 @@ def render_dashboard(
     )
     ax_trend = fig.add_subplot(grid[0, 0])
     ax_chart = fig.add_subplot(grid[1, 0])
-    right_grid = grid[:, 1].subgridspec(2, 1, height_ratios=[0.72, 1.28], hspace=0.18)
+    right_grid = grid[:, 1].subgridspec(2, 1, height_ratios=[0.8, 1.2], hspace=0.2)
     ax_next = fig.add_subplot(right_grid[0, 0])
     ax_table = fig.add_subplot(right_grid[1, 0])
     fig.patch.set_facecolor("#f4efe6")
@@ -355,7 +419,13 @@ def render_dashboard(
             spine.set_visible(False)
     else:
         trend_history = history.sort_values("timestamp").tail(20).copy()
-        scored = trend_history[trend_history["failed"] == 0].copy()
+        scored = trend_history[
+            (pd.to_numeric(trend_history["failed"], errors="coerce").fillna(0) == 0)
+            & (trend_history["status"] != "missing")
+            & (trend_history["predicted"].fillna("").astype(str).str.strip() != "")
+        ].copy()
+        scored["result"] = pd.to_numeric(scored["result"], errors="coerce")
+        scored = scored[scored["result"].notna()].copy()
         if scored.empty:
             ax_trend.text(
                 0.5,
@@ -434,22 +504,25 @@ def render_dashboard(
         def to_result(row: pd.Series) -> str:
             if int(row["failed"]) == 1:
                 return "FAILED"
+            result_value = row["result"]
+            if pd.isna(result_value) or str(result_value).strip() == "":
+                return "--"
             return "OK" if int(row["result"]) == 1 else "MISS"
 
         recent_rows = [
             [
                 format_dual_time(row["timestamp"]),
                 (
-                    f"{float(row['target_open']):,.2f}"
-                    if pd.notna(row["target_open"])
+                    f"{float(row['reference_open']):,.2f}"
+                    if pd.notna(row["reference_open"])
                     else "--"
                 ),
                 (
-                    f"{float(row['target_open']):,.2f}"
-                    if pd.notna(row["target_open"])
+                    f"{float(row['target_close']):,.2f}"
+                    if pd.notna(row["target_close"])
                     else (
-                        f"{float(row['target_close']):,.2f}"
-                        if pd.notna(row["target_close"])
+                        f"{float(row['target_open']):,.2f}"
+                        if pd.notna(row["target_open"])
                         else "--"
                     )
                 ),
@@ -462,7 +535,7 @@ def render_dashboard(
 
     recent_table = ax_chart.table(
         cellText=recent_rows,
-        colLabels=["Time", "Open Price", "Target Open", "Pred", "Actual", "Result"],
+        colLabels=["Time", "Open Price", "Close Price", "Pred", "Actual", "Result"],
         loc="center",
         cellLoc="center",
         colLoc="center",
@@ -552,13 +625,13 @@ def render_dashboard(
     next_table = ax_next.table(
         cellText=next_rows,
         colLabels=["Field", "Value"],
-        loc="center",
+        bbox=[0, 0.0, 1, 0.88],
         cellLoc="left",
         colLoc="left",
     )
-    next_table.scale(1, 1.65)
+    next_table.scale(1, 2.15)
     next_table.auto_set_font_size(False)
-    next_table.set_fontsize(10.5)
+    next_table.set_fontsize(9.25)
 
     for (row_idx, col_idx), cell in next_table.get_celld().items():
         cell.set_edgecolor("#d8cbb8")
@@ -567,6 +640,9 @@ def render_dashboard(
             cell.set_text_props(color="white", weight="bold")
             continue
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
+        if row_idx in {1, 2}:
+            cell.set_height(cell.get_height() * 1.55)
+            cell.get_text().set_linespacing(1.3)
         if col_idx == 1:
             value_text = str(cell.get_text().get_text())
             if row_idx == 4:
@@ -591,7 +667,7 @@ def render_dashboard(
     table = ax_table.table(
         cellText=table_rows,
         colLabels=["Metric", "Value"],
-        loc="center",
+        bbox=[0, 0.0, 1, 0.92],
         cellLoc="left",
         colLoc="left",
     )
@@ -631,7 +707,7 @@ def render_dashboard(
     )
     fig.text(
         0.80,
-        0.905,
+        0.935,
         "Next Prediction",
         ha="center",
         va="bottom",
@@ -641,7 +717,7 @@ def render_dashboard(
     )
     fig.text(
         0.80,
-        0.49,
+        0.505,
         "Bot Stats",
         ha="center",
         va="bottom",
@@ -668,7 +744,11 @@ def main() -> None:
     prediction_record = load_last_prediction()
 
     history = remove_incomplete_validations(
-        normalize_history_labels(backfill_recent_history_prices(load_history()))
+        normalize_history_labels(
+            backfill_recent_history_prices(
+                ensure_recent_history_slots(load_history())
+            )
+        )
     )
     if prediction_record is None:
         stats = compute_stats(history)
