@@ -1,5 +1,5 @@
 {
-  "status": "success",
+  "status": "rerun_requested",
   "generated_at": "2026-03-17T17:33:22.623092+00:00",
   "registered_model_name": "btc-usdt-directional-classifier",
   "model_name": "MLPClassifier",
@@ -14,5 +14,6 @@
   "reference_close": 74354.17,
   "price_to_beat": 74155.68,
   "symbol": "BTC/USDT",
-  "timeframe": "1h"
+  "timeframe": "1h",
+  "rerun_requested_at": "2026-03-17T17:46:20.546535+00:00"
 }
