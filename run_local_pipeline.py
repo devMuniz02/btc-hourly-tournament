@@ -38,13 +38,19 @@ class Tee(io.TextIOBase):
 
     def write(self, s: str) -> int:
         for stream in self.streams:
-            stream.write(s)
-            stream.flush()
+            try:
+                stream.write(s)
+                stream.flush()
+            except ValueError:
+                continue
         return len(s)
 
     def flush(self) -> None:
         for stream in self.streams:
-            stream.flush()
+            try:
+                stream.flush()
+            except ValueError:
+                continue
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -253,6 +259,7 @@ def main() -> int:
             print(f"Writing run log to {LOG_PATH}")
             args = parse_args()
             load_dotenv(ROOT / ".env")
+            os.environ["BTC_EXCHANGE_MODE"] = "binance"
             validate_required_env()
 
             validate_exit_code = run_python_script("validate_dashboard.py")
