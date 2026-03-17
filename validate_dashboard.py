@@ -64,6 +64,11 @@ def resolve_actual_direction(
 ) -> tuple[int, pd.Timestamp, float, float] | None:
     reference_ts = pd.Timestamp(prediction_record["reference_candle_timestamp"])
     target_ts = pd.Timestamp(prediction_record["target_candle_timestamp"])
+    now_utc = pd.Timestamp.now(tz="UTC")
+
+    # The target hour is resolved as soon as the next hour opens.
+    if now_utc < target_ts:
+        return None
 
     candle_frame = candles.copy()
     candle_frame["timestamp"] = pd.to_datetime(candle_frame["timestamp"], utc=True)
@@ -71,10 +76,10 @@ def resolve_actual_direction(
     if reference_ts not in indexed.index or target_ts not in indexed.index:
         return None
 
-    reference_close = float(indexed.loc[reference_ts, "close"])
-    target_close = float(indexed.loc[target_ts, "close"])
-    actual_label = int(target_close > reference_close)
-    return actual_label, target_ts, reference_close, target_close
+    reference_open = float(indexed.loc[reference_ts, "open"])
+    target_open = float(indexed.loc[target_ts, "open"])
+    actual_label = int(target_open > reference_open)
+    return actual_label, target_ts, reference_open, target_open
 
 
 def load_history() -> pd.DataFrame:
@@ -89,6 +94,7 @@ def load_history() -> pd.DataFrame:
                 "status",
                 "reference_open",
                 "reference_close",
+                "target_open",
                 "target_close",
             ]
         )
@@ -104,6 +110,7 @@ def load_history() -> pd.DataFrame:
                 "status",
                 "reference_open",
                 "reference_close",
+                "target_open",
                 "target_close",
             ]
         )
@@ -112,7 +119,7 @@ def load_history() -> pd.DataFrame:
         history["failed"] = 0
     if "status" not in history.columns:
         history["status"] = "validated"
-    for column in ["reference_open", "reference_close", "target_close"]:
+    for column in ["reference_open", "reference_close", "target_open", "target_close"]:
         if column not in history.columns:
             history[column] = pd.NA
     return history
@@ -140,6 +147,22 @@ def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFra
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated
+
+
+def remove_incomplete_validations(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history
+
+    now_utc = pd.Timestamp.now(tz="UTC")
+    keep_mask = ~(
+        (history["status"] == "validated")
+        & (history["timestamp"] > now_utc)
+    )
+    cleaned = history.loc[keep_mask].copy()
+    if len(cleaned) != len(history):
+        cleaned = cleaned.sort_values("timestamp").reset_index(drop=True)
+        cleaned.to_csv(HISTORY_PATH, index=False)
+    return cleaned
 
 
 def compute_stats(history: pd.DataFrame) -> dict[str, int]:
@@ -182,6 +205,91 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def backfill_recent_history_prices(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history
+
+    needs_prices = history[
+        history["reference_open"].isna()
+        | history["reference_close"].isna()
+        | history["target_open"].isna()
+        | history["target_close"].isna()
+    ]
+    if needs_prices.empty:
+        return history
+
+    oldest_missing_ts = pd.Timestamp(needs_prices["timestamp"].min())
+    now_utc = pd.Timestamp.utcnow()
+    hours_needed = int(max((now_utc - oldest_missing_ts).total_seconds() // 3600 + 4, 48))
+    lookback_hours = min(max(hours_needed, 48), tournament.LOOKBACK_HOURS)
+    try:
+        candles = tournament.fetch_ohlcv(
+            limit=lookback_hours,
+            min_candles=min(lookback_hours, 8),
+        )
+    except Exception:
+        return history
+
+    candle_frame = candles.copy()
+    candle_frame["timestamp"] = pd.to_datetime(candle_frame["timestamp"], utc=True)
+    indexed = candle_frame.set_index("timestamp")
+
+    updated = history.copy()
+    changed = False
+    for idx, row in updated.iterrows():
+        target_ts = pd.Timestamp(row["timestamp"])
+        reference_ts = target_ts - pd.Timedelta(hours=1)
+        if reference_ts in indexed.index:
+            if pd.isna(row["reference_open"]):
+                updated.at[idx, "reference_open"] = float(indexed.loc[reference_ts, "open"])
+                changed = True
+            if pd.isna(row["reference_close"]):
+                updated.at[idx, "reference_close"] = float(indexed.loc[reference_ts, "close"])
+                changed = True
+        if target_ts in indexed.index:
+            if pd.isna(row["target_open"]):
+                updated.at[idx, "target_open"] = float(indexed.loc[target_ts, "open"])
+                changed = True
+            if pd.isna(row["target_close"]):
+                updated.at[idx, "target_close"] = float(indexed.loc[target_ts, "close"])
+                changed = True
+
+    if changed:
+        updated = updated.sort_values("timestamp").reset_index(drop=True)
+        updated.to_csv(HISTORY_PATH, index=False)
+    return updated
+
+
+def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history
+
+    updated = history.copy()
+    changed = False
+    for idx, row in updated.iterrows():
+        if int(row.get("failed", 0)) == 1 or str(row.get("status", "")) != "validated":
+            continue
+        if pd.isna(row["reference_open"]) or pd.isna(row["target_open"]):
+            continue
+
+        actual_label = int(float(row["target_open"]) > float(row["reference_open"]))
+        predicted_value = row["predicted"]
+        if pd.isna(predicted_value) or str(predicted_value).upper() == "FAILED":
+            continue
+
+        predicted_label = int(predicted_value)
+        result = int(predicted_label == actual_label)
+
+        if int(row["actual"]) != actual_label or int(row["result"]) != result:
+            updated.at[idx, "actual"] = actual_label
+            updated.at[idx, "result"] = result
+            changed = True
+
+    if changed:
+        updated.to_csv(HISTORY_PATH, index=False)
+    return updated
+
+
 def format_dual_time(value: Any) -> str:
     timestamp = pd.Timestamp(value)
     if timestamp.tzinfo is None:
@@ -192,6 +300,15 @@ def format_dual_time(value: Any) -> str:
     return (
         f"{timestamp.strftime('%m-%d %H:%M')} UTC\n"
         f"{eastern.strftime('%m-%d %I:%M %p')} ET"
+    )
+
+
+def format_current_dual_time() -> str:
+    now_utc = pd.Timestamp.now(tz="UTC")
+    now_et = now_utc.tz_convert(EASTERN_TZ)
+    return (
+        f"Current Time: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        f" | {now_et.strftime('%Y-%m-%d %I:%M:%S %p')} ET"
     )
 
 
@@ -295,7 +412,7 @@ def render_dashboard(
                 spine.set_color("#d8cbb8")
 
     ax_chart.axis("off")
-    ax_chart.set_title("10 Most Recent Predictions", fontsize=15, weight="bold", pad=14)
+    ax_chart.set_title("10 Most Recent Predictions", fontsize=15, weight="bold", pad=18)
 
     if history.empty:
         recent_rows = [["--", "--", "--", "--", "--", "--"]]
@@ -323,14 +440,18 @@ def render_dashboard(
             [
                 format_dual_time(row["timestamp"]),
                 (
-                    f"{float(row['reference_open']):,.2f}"
-                    if pd.notna(row["reference_open"])
+                    f"{float(row['target_open']):,.2f}"
+                    if pd.notna(row["target_open"])
                     else "--"
                 ),
                 (
-                    f"{float(row['reference_close']):,.2f}"
-                    if pd.notna(row["reference_close"])
-                    else "--"
+                    f"{float(row['target_open']):,.2f}"
+                    if pd.notna(row["target_open"])
+                    else (
+                        f"{float(row['target_close']):,.2f}"
+                        if pd.notna(row["target_close"])
+                        else "--"
+                    )
                 ),
                 to_arrow(row["predicted"]),
                 to_arrow(row["actual"]),
@@ -341,7 +462,7 @@ def render_dashboard(
 
     recent_table = ax_chart.table(
         cellText=recent_rows,
-        colLabels=["Time", "Open", "Close", "Pred", "Actual", "Result"],
+        colLabels=["Time", "Open Price", "Target Open", "Pred", "Actual", "Result"],
         loc="center",
         cellLoc="center",
         colLoc="center",
@@ -359,8 +480,14 @@ def render_dashboard(
 
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
         text_value = cell.get_text().get_text()
+        normalized_text_value = (
+            text_value.replace("â–²", "▲").replace("â–¼", "▼")
+        )
+        if normalized_text_value != text_value:
+            cell.get_text().set_text(normalized_text_value)
+            text_value = normalized_text_value
 
-        if col_idx in {1, 2}:
+        if col_idx in {3, 4}:
             if "UP" in text_value:
                 cell.set_text_props(color="#1b7f4a", weight="bold")
             elif "DOWN" in text_value:
@@ -368,7 +495,7 @@ def render_dashboard(
             elif "FAILED" in text_value:
                 cell.set_text_props(color="#6c757d", weight="bold")
 
-        if col_idx == 3:
+        if col_idx == 5:
             if text_value == "OK":
                 cell.set_facecolor("#d9f2e3")
                 cell.set_text_props(color="#1b7f4a", weight="bold")
@@ -380,11 +507,12 @@ def render_dashboard(
                 cell.set_text_props(color="#495057", weight="bold")
 
     ax_next.axis("off")
-    ax_next.set_title("Next Prediction", fontsize=15, weight="bold", pad=14)
 
     if not prediction_record:
         next_rows = [
+            ["Open Time", "--"],
             ["Target Time", "--"],
+            ["Open Price", "--"],
             ["Signal", "--"],
             ["Probability", "--"],
             ["Model", "--"],
@@ -398,11 +526,22 @@ def render_dashboard(
         if prediction_record.get("status") == "failed":
             signal = "FAILED"
             signal_color = "#6c757d"
+        open_time = prediction_record.get("reference_candle_timestamp", "--")
         target_time = prediction_record.get("target_candle_timestamp", "--")
+        if open_time != "--":
+            open_time = format_dual_time(open_time)
         if target_time != "--":
             target_time = format_dual_time(target_time)
+        open_price = float(
+            prediction_record.get(
+                "price_to_beat",
+                prediction_record.get("reference_open", 0.0),
+            )
+        )
         next_rows = [
+            ["Open Time", open_time],
             ["Target Time", target_time],
+            ["Open Price", f"{open_price:,.2f}"],
             ["Signal", signal],
             ["Probability", f"{float(prediction_record.get('probability_up', 0.0)):.1%}"],
             ["Model", prediction_record.get("model_name", "--")],
@@ -430,10 +569,10 @@ def render_dashboard(
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
         if col_idx == 1:
             value_text = str(cell.get_text().get_text())
-            if row_idx == 2:
+            if row_idx == 4:
                 cell.set_facecolor("#e9f5ec" if signal_color == "#1b7f4a" else "#f8d7da")
                 cell.set_text_props(color=signal_color, weight="bold")
-            elif row_idx == 3:
+            elif row_idx == 5:
                 cell.set_text_props(color="#1f3c4d", weight="bold")
             elif value_text.endswith("%"):
                 cell.set_text_props(color=signal_color, weight="bold")
@@ -459,7 +598,6 @@ def render_dashboard(
     table.scale(1, 2)
     table.auto_set_font_size(False)
     table.set_fontsize(11)
-    ax_table.set_title("Bot Stats", fontsize=15, weight="bold", pad=14)
 
     for (row_idx, col_idx), cell in table.get_celld().items():
         cell.set_edgecolor("#d8cbb8")
@@ -483,13 +621,42 @@ def render_dashboard(
         y=0.98,
     )
     fig.text(
+        0.5,
+        0.945,
+        format_current_dual_time(),
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color="#5b5f66",
+    )
+    fig.text(
+        0.80,
+        0.905,
+        "Next Prediction",
+        ha="center",
+        va="bottom",
+        fontsize=15,
+        weight="bold",
+        color="#000000",
+    )
+    fig.text(
+        0.80,
+        0.49,
+        "Bot Stats",
+        ha="center",
+        va="bottom",
+        fontsize=15,
+        weight="bold",
+        color="#000000",
+    )
+    fig.text(
         0.015,
         0.02,
         "Green = UP / correct strength   Red = DOWN / misses   Gray = failed run",
         fontsize=10,
         color="#5b5f66",
     )
-    fig.subplots_adjust(left=0.05, right=0.98, top=0.88, bottom=0.12)
+    fig.subplots_adjust(left=0.05, right=0.98, top=0.86, bottom=0.12)
     DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -500,7 +667,9 @@ def main() -> None:
     champion = get_current_champion_info(client, registered_model_name)
     prediction_record = load_last_prediction()
 
-    history = load_history()
+    history = remove_incomplete_validations(
+        normalize_history_labels(backfill_recent_history_prices(load_history()))
+    )
     if prediction_record is None:
         stats = compute_stats(history)
         render_dashboard(history, stats, prediction_record)
@@ -533,6 +702,7 @@ def main() -> None:
                 "status": "failed",
                 "reference_open": prediction_record.get("reference_open"),
                 "reference_close": prediction_record.get("reference_close"),
+                "target_open": pd.NA,
                 "target_close": pd.NA,
             },
         )
@@ -564,7 +734,7 @@ def main() -> None:
         print("Target candle is not available yet. Dashboard refreshed without new validation row.")
         return
 
-    actual_label, target_timestamp, reference_close, target_close = actual
+    actual_label, target_timestamp, reference_open, target_open = actual
     predicted_label = int(prediction_record["predicted_label"])
     result = int(predicted_label == actual_label)
 
@@ -577,9 +747,10 @@ def main() -> None:
             "result": result,
             "failed": 0,
             "status": "validated",
-            "reference_open": prediction_record.get("reference_open"),
-            "reference_close": reference_close,
-            "target_close": target_close,
+            "reference_open": reference_open,
+            "reference_close": prediction_record.get("reference_close"),
+            "target_open": target_open,
+            "target_close": pd.NA,
         },
     )
     stats = compute_stats(history)
@@ -594,8 +765,8 @@ def main() -> None:
                 "predicted": predicted_label,
                 "actual": actual_label,
                 "result": result,
-                "reference_close": reference_close,
-                "target_close": target_close,
+                "reference_open": reference_open,
+                "target_open": target_open,
             },
             indent=2,
         ),

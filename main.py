@@ -56,6 +56,10 @@ FALLBACK_EXCHANGE_CANDIDATES = [
 ]
 
 
+def log_step(message: str) -> None:
+    print(f"\n=== {message} ===", flush=True)
+
+
 def set_seed(seed: int = SEED) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -69,6 +73,17 @@ def get_env_str(name: str) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def get_exchange_candidates() -> tuple[
+    list[tuple[str, str, dict[str, Any]]],
+    tuple[str, str, dict[str, Any]] | None,
+    list[tuple[str, str, dict[str, Any]]],
+]:
+    exchange_mode = (get_env_str("BTC_EXCHANGE_MODE") or "").lower()
+    if exchange_mode == "binance":
+        return [("binance", "BTC/USDT", {})], None, []
+    return BINANCE_CANDIDATES, BINANCE_US_CANDIDATE, FALLBACK_EXCHANGE_CANDIDATES
 
 
 def configure_tracking() -> str:
@@ -98,6 +113,7 @@ def fetch_ohlcv(
 ) -> pd.DataFrame:
     failures: list[str] = []
     required_candles = min_candles if min_candles is not None else limit
+    primary_candidates, secondary_candidate, fallback_candidates = get_exchange_candidates()
 
     def try_exchange(
         exchange_id: str,
@@ -125,31 +141,32 @@ def fetch_ohlcv(
         print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
         return frame
 
-    for exchange_id, symbol, extra_config in BINANCE_CANDIDATES:
+    for exchange_id, symbol, extra_config in primary_candidates:
         try:
             return try_exchange(exchange_id, symbol, extra_config)
         except Exception as exc:
             failures.append(f"{exchange_id}:{symbol}: {exc}")
             print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
 
-    exchange_id, symbol, extra_config = BINANCE_US_CANDIDATE
-    attempts = 0
-    while True:
-        try:
-            return try_exchange(exchange_id, symbol, extra_config)
-        except Exception as exc:
-            attempts += 1
-            failures.append(f"{exchange_id}:{symbol}: {exc}")
-            print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
-            if not retry_binanceus or attempts >= retry_binanceus_attempts:
-                break
-            print(
-                f"Retrying {exchange_id} {symbol} in {retry_interval_seconds} seconds "
-                f"(attempt {attempts + 1} of {retry_binanceus_attempts})."
-            )
-            time.sleep(retry_interval_seconds)
+    if secondary_candidate is not None:
+        exchange_id, symbol, extra_config = secondary_candidate
+        attempts = 0
+        while True:
+            try:
+                return try_exchange(exchange_id, symbol, extra_config)
+            except Exception as exc:
+                attempts += 1
+                failures.append(f"{exchange_id}:{symbol}: {exc}")
+                print(f"Exchange attempt failed for {exchange_id} {symbol}: {exc}")
+                if not retry_binanceus or attempts >= retry_binanceus_attempts:
+                    break
+                print(
+                    f"Retrying {exchange_id} {symbol} in {retry_interval_seconds} seconds "
+                    f"(attempt {attempts + 1} of {retry_binanceus_attempts})."
+                )
+                time.sleep(retry_interval_seconds)
 
-    for exchange_id, symbol, extra_config in FALLBACK_EXCHANGE_CANDIDATES:
+    for exchange_id, symbol, extra_config in fallback_candidates:
         try:
             return try_exchange(exchange_id, symbol, extra_config)
         except Exception as exc:
@@ -454,6 +471,7 @@ def train_challengers(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
 ) -> list[TournamentCandidate]:
+    log_step("Prepare challenger datasets")
     train_x = train_df[FEATURE_COLUMNS].to_numpy(dtype=np.float32)
     train_y = train_df["target"].to_numpy(dtype=np.int32)
 
@@ -561,6 +579,7 @@ def train_challengers(
     ]
 
     for candidate in challengers:
+        print(f"Training challenger: {candidate.name}", flush=True)
         if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
             candidate.model.fit(train_x, train_y)
         elif candidate.family == "lstm":
@@ -595,6 +614,7 @@ def train_challengers(
             )
         else:
             raise ValueError(f"Unsupported challenger family: {candidate.family}")
+        print(f"Finished challenger: {candidate.name}", flush=True)
 
     return challengers
 
@@ -605,6 +625,7 @@ def build_results(
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
 ) -> list[dict[str, Any]]:
+    log_step("Evaluate challengers on validation window")
     eval_frame = pd.concat([train_df, valid_df], ignore_index=True)
     prediction_frame = pd.concat([eval_frame, future_row], ignore_index=True)
     val_start = len(train_df)
@@ -724,6 +745,7 @@ def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
 ) -> tuple[TournamentCandidate | None, dict[str, str] | None]:
+    log_step("Load current champion from MLflow")
     try:
         version = client.get_model_version_by_alias(registered_model_name, "champion")
     except Exception:
@@ -818,6 +840,7 @@ def promote_champion(
     validation_start: str,
     validation_end: str,
 ) -> str:
+    log_step(f"Promote new champion: {winner['candidate'].name}")
     candidate: TournamentCandidate = winner["candidate"]
     with tempfile.TemporaryDirectory() as temp_dir:
         package_dir = Path(temp_dir) / ARTIFACT_SUBDIR
@@ -904,6 +927,7 @@ def build_prediction_record(
         "target_candle_timestamp": target_timestamp.isoformat(),
         "reference_open": float(future_row["open"].iloc[0]),
         "reference_close": float(future_row["close"].iloc[0]),
+        "price_to_beat": float(future_row["open"].iloc[0]),
         "symbol": SYMBOL,
         "timeframe": TIMEFRAME,
     }
@@ -927,22 +951,26 @@ def write_failed_prediction_record(exc: Exception) -> None:
 
 
 def main() -> None:
+    log_step("Initialize tournament")
     set_seed()
     registered_model_name = configure_tracking()
     client = MlflowClient()
 
+    log_step("Fetch BTC/USDT market data")
     raw = fetch_ohlcv(
         limit=LOOKBACK_HOURS,
         min_candles=1000,
         retry_binanceus=True,
         retry_binanceus_attempts=3,
     )
+    log_step("Build features and dataset splits")
     featured = add_features(raw)
     train_df, valid_df, future_row = split_dataset(featured, VALIDATION_HOURS)
 
     validation_start = valid_df["timestamp"].iloc[0].isoformat()
     validation_end = valid_df["timestamp"].iloc[-1].isoformat()
 
+    log_step("Train challenger zoo")
     challengers = train_challengers(train_df, valid_df)
     challenger_results = build_results(challengers, train_df, valid_df, future_row)
 
@@ -979,11 +1007,13 @@ def main() -> None:
         future_row=future_row,
         registered_model_name=registered_model_name,
     )
+    log_step("Write latest prediction metadata")
     LAST_PREDICTION_PATH.write_text(
         json.dumps(prediction_record, indent=2),
         encoding="utf-8",
     )
 
+    log_step("Log tournament results to MLflow")
     with mlflow.start_run(run_name="btc-directional-tournament"):
         mlflow.set_tags(
             {
