@@ -1,6 +1,6 @@
 {
-  "status": "rerun_requested",
-  "generated_at": "2026-03-17T17:33:22.623092+00:00",
+  "status": "success",
+  "generated_at": "2026-03-17T17:47:00.671932+00:00",
   "registered_model_name": "btc-usdt-directional-classifier",
   "model_name": "MLPClassifier",
   "model_accuracy": 0.6041666666666666,
@@ -11,9 +11,8 @@
   "reference_candle_timestamp": "2026-03-17T17:00:00+00:00",
   "target_candle_timestamp": "2026-03-17T18:00:00+00:00",
   "reference_open": 74155.68,
-  "reference_close": 74354.17,
+  "reference_close": 74417.78,
   "price_to_beat": 74155.68,
   "symbol": "BTC/USDT",
-  "timeframe": "1h",
-  "rerun_requested_at": "2026-03-17T17:46:20.546535+00:00"
+  "timeframe": "1h"
 }
