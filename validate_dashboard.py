@@ -54,8 +54,37 @@ def load_last_prediction() -> dict[str, Any] | None:
     return None
 
 
-def fetch_recent_candles() -> pd.DataFrame:
-    return tournament.fetch_ohlcv(limit=8, min_candles=8)
+def compute_validation_lookback_hours(
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+) -> int:
+    lookback_hours = 48
+
+    if not history.empty:
+        oldest_ts = pd.Timestamp(history["timestamp"].min())
+        now_utc = pd.Timestamp.utcnow()
+        history_hours = int(max((now_utc - oldest_ts).total_seconds() // 3600 + 4, 48))
+        lookback_hours = max(lookback_hours, history_hours)
+
+    if prediction_record is not None:
+        reference_ts = pd.Timestamp(prediction_record["reference_candle_timestamp"])
+        target_ts = pd.Timestamp(prediction_record["target_candle_timestamp"])
+        now_utc = pd.Timestamp.utcnow()
+        prediction_hours = int(
+            max((now_utc - min(reference_ts, target_ts)).total_seconds() // 3600 + 4, 8)
+        )
+        lookback_hours = max(lookback_hours, prediction_hours)
+
+    return min(lookback_hours, tournament.LOOKBACK_HOURS)
+
+
+def fetch_validation_candles(
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+) -> pd.DataFrame:
+    lookback_hours = compute_validation_lookback_hours(history, prediction_record)
+    min_candles = min(max(lookback_hours, 8), tournament.LOOKBACK_HOURS)
+    return tournament.fetch_ohlcv(limit=lookback_hours, min_candles=min_candles)
 
 
 def resolve_actual_direction(
@@ -292,20 +321,11 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
     }
 
 
-def backfill_recent_history_prices(history: pd.DataFrame) -> pd.DataFrame:
+def backfill_recent_history_prices(history: pd.DataFrame, candles: pd.DataFrame | None = None) -> pd.DataFrame:
     if history.empty:
         return history
 
-    oldest_ts = pd.Timestamp(history["timestamp"].min())
-    now_utc = pd.Timestamp.utcnow()
-    hours_needed = int(max((now_utc - oldest_ts).total_seconds() // 3600 + 4, 48))
-    lookback_hours = min(max(hours_needed, 48), tournament.LOOKBACK_HOURS)
-    try:
-        candles = tournament.fetch_ohlcv(
-            limit=lookback_hours,
-            min_candles=min(lookback_hours, 8),
-        )
-    except Exception:
+    if candles is None:
         return history
 
     candle_frame = candles.copy()
@@ -770,11 +790,19 @@ def main() -> None:
     client, registered_model_name, experiment_name = configure_tracking()
     champion = get_current_champion_info(client, registered_model_name)
     prediction_record = load_last_prediction()
+    history = ensure_recent_history_slots(load_history())
+
+    candles: pd.DataFrame | None = None
+    try:
+        candles = fetch_validation_candles(history, prediction_record)
+    except Exception as exc:
+        print(f"Could not fetch validation candles. Continuing with stored history only: {exc}")
 
     history = remove_incomplete_validations(
         normalize_history_labels(
             backfill_recent_history_prices(
-                ensure_recent_history_slots(load_history())
+                history,
+                candles,
             )
         )
     )
@@ -828,12 +856,10 @@ def main() -> None:
         )
         return
 
-    try:
-        candles = fetch_recent_candles()
-    except Exception as exc:
+    if candles is None:
         stats = compute_stats(history)
         render_dashboard(history, stats, prediction_record)
-        print(f"Could not fetch validation candles. Skipping validation for now: {exc}")
+        print("Could not fetch validation candles. Skipping validation for now.")
         return
     actual = resolve_actual_direction(candles, prediction_record)
     if actual is None:
