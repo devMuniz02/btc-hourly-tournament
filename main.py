@@ -192,19 +192,58 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
+def compute_atr(frame: pd.DataFrame, period: int = 14) -> pd.Series:
+    high_low = frame["high"] - frame["low"]
+    high_close = (frame["high"] - frame["close"].shift(1)).abs()
+    low_close = (frame["low"] - frame["close"].shift(1)).abs()
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
 def add_features(frame: pd.DataFrame) -> pd.DataFrame:
     df = frame.copy()
     close = df["close"]
+    volume = df["volume"]
 
     ema_fast = close.ewm(span=12, adjust=False).mean()
     ema_slow = close.ewm(span=26, adjust=False).mean()
+    ema_8 = close.ewm(span=8, adjust=False).mean()
+    ema_21 = close.ewm(span=21, adjust=False).mean()
+    ema_50 = close.ewm(span=50, adjust=False).mean()
+    macd_signal = (ema_fast - ema_slow).ewm(span=9, adjust=False).mean()
+
+    rolling_mean_20 = close.rolling(window=20, min_periods=20).mean()
+    rolling_std_20 = close.rolling(window=20, min_periods=20).std()
+    lowest_low_14 = df["low"].rolling(window=14, min_periods=14).min()
+    highest_high_14 = df["high"].rolling(window=14, min_periods=14).max()
+    stochastic_k = 100 * (close - lowest_low_14) / (highest_high_14 - lowest_low_14)
+    stochastic_d = stochastic_k.rolling(window=3, min_periods=3).mean()
+    atr_14 = compute_atr(df, 14)
+    volume_mean_20 = volume.rolling(window=20, min_periods=20).mean()
+    volume_std_20 = volume.rolling(window=20, min_periods=20).std()
 
     df["rsi_14"] = compute_rsi(close, 14)
     df["macd"] = ema_fast - ema_slow
+    df["macd_signal"] = macd_signal
+    df["macd_hist"] = df["macd"] - df["macd_signal"]
+    df["ema_8_gap"] = (close / ema_8) - 1.0
+    df["ema_21_gap"] = (close / ema_21) - 1.0
+    df["ema_50_gap"] = (close / ema_50) - 1.0
+    df["bollinger_zscore"] = (close - rolling_mean_20) / rolling_std_20
+    df["bollinger_bandwidth"] = (2 * rolling_std_20) / rolling_mean_20
+    df["stochastic_k"] = stochastic_k
+    df["stochastic_d"] = stochastic_d
+    df["atr_14"] = atr_14
+    df["atr_pct"] = atr_14 / close
     df["volume_delta"] = df["volume"].diff()
+    df["volume_zscore_20"] = (volume - volume_mean_20) / volume_std_20
     df["price_change_1h"] = close.pct_change(1)
     df["price_change_3h"] = close.pct_change(3)
     df["price_change_6h"] = close.pct_change(6)
+    df["price_change_12h"] = close.pct_change(12)
+    df["price_change_24h"] = close.pct_change(24)
+    df["volatility_6h"] = df["price_change_1h"].rolling(window=6, min_periods=6).std()
+    df["volatility_24h"] = df["price_change_1h"].rolling(window=24, min_periods=24).std()
     df["target"] = (df["close"].shift(-1) > df["close"]).astype(int)
 
     df = df.replace([np.inf, -np.inf], np.nan).dropna().reset_index(drop=True)
@@ -219,10 +258,26 @@ FEATURE_COLUMNS = [
     "volume",
     "rsi_14",
     "macd",
+    "macd_signal",
+    "macd_hist",
+    "ema_8_gap",
+    "ema_21_gap",
+    "ema_50_gap",
+    "bollinger_zscore",
+    "bollinger_bandwidth",
+    "stochastic_k",
+    "stochastic_d",
+    "atr_14",
+    "atr_pct",
     "volume_delta",
+    "volume_zscore_20",
     "price_change_1h",
     "price_change_3h",
     "price_change_6h",
+    "price_change_12h",
+    "price_change_24h",
+    "volatility_6h",
+    "volatility_24h",
 ]
 
 
@@ -281,8 +336,7 @@ class LSTMClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         output, _ = self.lstm(x)
-        logits = self.head(output[:, -1, :]).squeeze(-1)
-        return torch.sigmoid(logits)
+        return self.head(output[:, -1, :]).squeeze(-1)
 
 
 class SequenceMLPClassifier(nn.Module):
@@ -302,7 +356,7 @@ class SequenceMLPClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.reshape(x.size(0), -1)
-        return torch.sigmoid(self.network(x).squeeze(-1))
+        return self.network(x).squeeze(-1)
 
 
 class TransformerClassifier(nn.Module):
@@ -340,8 +394,52 @@ class TransformerClassifier(nn.Module):
         seq_len = x.size(1)
         x = self.input_proj(x) + self.position_embedding[:, :seq_len, :]
         x = self.encoder(x)
-        logits = self.head(x[:, -1, :]).squeeze(-1)
-        return torch.sigmoid(logits)
+        return self.head(x[:, -1, :]).squeeze(-1)
+
+
+def flatten_sequence_features(sequence_features: np.ndarray) -> np.ndarray:
+    return sequence_features.reshape(sequence_features.shape[0], -1)
+
+
+def prepare_sequence_splits(
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    feature_columns: list[str],
+    seq_len: int,
+) -> dict[str, np.ndarray | StandardScaler]:
+    train_features = train_df[feature_columns].to_numpy(dtype=np.float32)
+    sequence_frame = pd.concat([train_df, valid_df], ignore_index=True)
+    scaler = StandardScaler().fit(train_features)
+    scaled_sequence_features = scaler.transform(
+        sequence_frame[feature_columns].to_numpy(dtype=np.float32)
+    )
+    sequence_labels = sequence_frame["target"].to_numpy(dtype=np.float32)
+
+    train_indices = np.arange(len(train_df))
+    valid_indices = np.arange(len(train_df), len(train_df) + len(valid_df))
+    train_seq_x, train_seq_y = build_sequence_dataset(
+        features=scaled_sequence_features,
+        labels=sequence_labels,
+        indices=train_indices,
+        seq_len=seq_len,
+    )
+    valid_seq_x, valid_seq_y = build_sequence_dataset(
+        features=scaled_sequence_features,
+        labels=sequence_labels,
+        indices=valid_indices,
+        seq_len=seq_len,
+    )
+    if len(train_seq_x) == 0 or len(valid_seq_x) == 0:
+        raise RuntimeError("Could not build sequence datasets for the challenger models.")
+    return {
+        "scaler": scaler,
+        "train_seq_x": train_seq_x,
+        "train_seq_y": train_seq_y,
+        "valid_seq_x": valid_seq_x,
+        "valid_seq_y": valid_seq_y,
+        "train_flat_x": flatten_sequence_features(train_seq_x),
+        "valid_flat_x": flatten_sequence_features(valid_seq_x),
+    }
 
 
 def train_torch_classifier(
@@ -353,10 +451,13 @@ def train_torch_classifier(
     epochs: int,
     learning_rate: float,
     batch_size: int = 32,
-    patience: int = 4,
+    patience: int = 8,
 ) -> nn.Module:
     model.to(DEVICE)
-    criterion = nn.BCELoss()
+    positive_count = max(float(train_y.sum()), 1.0)
+    negative_count = max(float(len(train_y) - train_y.sum()), 1.0)
+    pos_weight = torch.tensor([negative_count / positive_count], dtype=torch.float32, device=DEVICE)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     train_dataset = torch.utils.data.TensorDataset(
@@ -389,8 +490,8 @@ def train_torch_classifier(
 
         model.eval()
         with torch.no_grad():
-            valid_probs = model(valid_x_tensor)
-            valid_loss = criterion(valid_probs, valid_y_tensor).item()
+            valid_logits = model(valid_x_tensor)
+            valid_loss = criterion(valid_logits, valid_y_tensor).item()
 
         if valid_loss < best_loss:
             best_loss = valid_loss
@@ -414,7 +515,7 @@ def torch_predict_proba(model: nn.Module, data: np.ndarray) -> np.ndarray:
     model.eval()
     with torch.no_grad():
         tensor = torch.tensor(data, dtype=torch.float32)
-        return model(tensor).cpu().numpy()
+        return torch.sigmoid(model(tensor)).cpu().numpy()
 
 
 @dataclass
@@ -448,14 +549,7 @@ def predict_candidate_probabilities(
     feature_rows: pd.DataFrame,
 ) -> np.ndarray:
     features = feature_rows[candidate.feature_columns].to_numpy(dtype=np.float32)
-
-    if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
-        return candidate.model.predict_proba(features)[:, 1]
-
-    if candidate.scaler is None:
-        raise RuntimeError(f"{candidate.name} requires a scaler for inference.")
-
-    scaled = candidate.scaler.transform(features)
+    scaled = candidate.scaler.transform(features) if candidate.scaler is not None else features
     sequence_indices = np.arange(len(feature_rows))
     seq_x, _ = build_sequence_dataset(
         features=scaled,
@@ -466,6 +560,10 @@ def predict_candidate_probabilities(
     output = np.full(len(feature_rows), np.nan, dtype=np.float32)
     if len(seq_x) == 0:
         return output
+    if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
+        seq_features = flatten_sequence_features(seq_x)
+        output[candidate.sequence_length - 1 :] = candidate.model.predict_proba(seq_features)[:, 1]
+        return output
     output[candidate.sequence_length - 1 :] = torch_predict_proba(candidate.model, seq_x)
     return output
 
@@ -475,87 +573,72 @@ def train_challengers(
     valid_df: pd.DataFrame,
 ) -> list[TournamentCandidate]:
     log_step("Prepare challenger datasets")
-    train_x = train_df[FEATURE_COLUMNS].to_numpy(dtype=np.float32)
-    train_y = train_df["target"].to_numpy(dtype=np.int32)
-
-    sequence_frame = pd.concat([train_df, valid_df], ignore_index=True)
-    seq_scaler = StandardScaler().fit(train_x)
-    scaled_sequence_features = seq_scaler.transform(
-        sequence_frame[FEATURE_COLUMNS].to_numpy(dtype=np.float32)
-    )
-    sequence_labels = sequence_frame["target"].to_numpy(dtype=np.float32)
-
-    train_indices = np.arange(len(train_df))
-    valid_indices = np.arange(len(train_df), len(train_df) + len(valid_df))
-
-    train_seq_x, train_seq_y = build_sequence_dataset(
-        features=scaled_sequence_features,
-        labels=sequence_labels,
-        indices=train_indices,
-        seq_len=SEQUENCE_LENGTH,
-    )
-    valid_seq_x, valid_seq_y = build_sequence_dataset(
-        features=scaled_sequence_features,
-        labels=sequence_labels,
-        indices=valid_indices,
-        seq_len=SEQUENCE_LENGTH,
-    )
-
-    if len(train_seq_x) == 0 or len(valid_seq_x) == 0:
-        raise RuntimeError("Could not build sequence datasets for the DL challengers.")
+    sequence_splits = prepare_sequence_splits(train_df, valid_df, FEATURE_COLUMNS, SEQUENCE_LENGTH)
+    seq_scaler = sequence_splits["scaler"]
+    train_flat_x = sequence_splits["train_flat_x"]
+    valid_flat_x = sequence_splits["valid_flat_x"]
+    train_seq_x = sequence_splits["train_seq_x"]
+    train_seq_y = sequence_splits["train_seq_y"]
+    valid_seq_x = sequence_splits["valid_seq_x"]
+    valid_seq_y = sequence_splits["valid_seq_y"]
 
     challengers = [
         TournamentCandidate(
             name="RandomForest",
             family="rf",
             model=RandomForestClassifier(
-                n_estimators=250,
-                max_depth=10,
-                min_samples_leaf=3,
+                n_estimators=400,
+                max_depth=12,
+                min_samples_leaf=2,
                 class_weight="balanced_subsample",
                 random_state=SEED,
                 n_jobs=-1,
             ),
             feature_columns=FEATURE_COLUMNS,
-            sequence_length=1,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=seq_scaler,
         ),
         TournamentCandidate(
             name="XGBoost",
             family="xgb",
             model=XGBClassifier(
-                n_estimators=300,
-                max_depth=4,
-                learning_rate=0.05,
+                n_estimators=500,
+                max_depth=5,
+                learning_rate=0.03,
                 subsample=0.9,
                 colsample_bytree=0.9,
                 eval_metric="logloss",
+                scale_pos_weight=max(float((len(train_seq_y) - train_seq_y.sum()) / max(train_seq_y.sum(), 1.0)), 1.0),
                 random_state=SEED,
                 n_jobs=2,
             ),
             feature_columns=FEATURE_COLUMNS,
-            sequence_length=1,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=seq_scaler,
         ),
         TournamentCandidate(
             name="MLPClassifier",
             family="mlp_sklearn",
             model=MLPClassifier(
-                hidden_layer_sizes=(64, 32),
+                hidden_layer_sizes=(256, 128, 64),
                 activation="relu",
                 alpha=1e-4,
                 batch_size=32,
-                learning_rate_init=1e-3,
-                max_iter=200,
+                learning_rate_init=6e-4,
+                max_iter=500,
                 random_state=SEED,
                 early_stopping=True,
-                n_iter_no_change=10,
+                validation_fraction=0.15,
+                n_iter_no_change=20,
             ),
             feature_columns=FEATURE_COLUMNS,
-            sequence_length=1,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=seq_scaler,
         ),
         TournamentCandidate(
             name="LSTM",
             family="lstm",
-            model=LSTMClassifier(input_dim=len(FEATURE_COLUMNS)),
+            model=LSTMClassifier(input_dim=len(FEATURE_COLUMNS), hidden_dim=64),
             feature_columns=FEATURE_COLUMNS,
             sequence_length=SEQUENCE_LENGTH,
             scaler=seq_scaler,
@@ -563,7 +646,12 @@ def train_challengers(
         TournamentCandidate(
             name="Transformer",
             family="transformer",
-            model=TransformerClassifier(input_dim=len(FEATURE_COLUMNS)),
+            model=TransformerClassifier(
+                input_dim=len(FEATURE_COLUMNS),
+                model_dim=48,
+                num_heads=4,
+                num_layers=3,
+            ),
             feature_columns=FEATURE_COLUMNS,
             sequence_length=SEQUENCE_LENGTH,
             scaler=seq_scaler,
@@ -584,7 +672,7 @@ def train_challengers(
     for candidate in challengers:
         print(f"Training challenger: {candidate.name}", flush=True)
         if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
-            candidate.model.fit(train_x, train_y)
+            candidate.model.fit(train_flat_x, train_seq_y)
         elif candidate.family == "lstm":
             candidate.model = train_torch_classifier(
                 candidate.model,
@@ -592,8 +680,8 @@ def train_challengers(
                 train_seq_y,
                 valid_seq_x,
                 valid_seq_y,
-                epochs=14,
-                learning_rate=8e-4,
+                epochs=40,
+                learning_rate=6e-4,
             )
         elif candidate.family == "transformer":
             candidate.model = train_torch_classifier(
@@ -602,8 +690,8 @@ def train_challengers(
                 train_seq_y,
                 valid_seq_x,
                 valid_seq_y,
-                epochs=12,
-                learning_rate=7e-4,
+                epochs=36,
+                learning_rate=5e-4,
             )
         elif candidate.family == "nn":
             candidate.model = train_torch_classifier(
@@ -612,8 +700,8 @@ def train_challengers(
                 train_seq_y,
                 valid_seq_x,
                 valid_seq_y,
-                epochs=16,
-                learning_rate=1e-3,
+                epochs=48,
+                learning_rate=7e-4,
             )
         else:
             raise ValueError(f"Unsupported challenger family: {candidate.family}")
@@ -665,12 +753,11 @@ def save_candidate_package(candidate: TournamentCandidate, output_dir: Path) -> 
         "sequence_length": candidate.sequence_length,
     }
 
+    if candidate.scaler is not None:
+        joblib.dump(candidate.scaler, output_dir / "scaler.joblib")
     if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
         joblib.dump(candidate.model, output_dir / "model.joblib")
     else:
-        if candidate.scaler is None:
-            raise RuntimeError(f"{candidate.name} is missing its scaler.")
-        joblib.dump(candidate.scaler, output_dir / "scaler.joblib")
         if candidate.family == "lstm":
             config["model_kwargs"] = {
                 "input_dim": candidate.model.input_dim,
@@ -710,11 +797,14 @@ def load_candidate_package(model_dir: str | Path) -> TournamentCandidate:
         scaler=None,
     )
 
+    scaler_path = package_dir / "scaler.joblib"
+    if scaler_path.exists():
+        candidate.scaler = joblib.load(scaler_path)
+
     if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
         candidate.model = joblib.load(package_dir / "model.joblib")
         return candidate
 
-    candidate.scaler = joblib.load(package_dir / "scaler.joblib")
     kwargs = config["model_kwargs"]
     if candidate.family == "lstm":
         candidate.model = LSTMClassifier(**kwargs)
@@ -1093,11 +1183,11 @@ def main() -> None:
                 "lookback_hours": LOOKBACK_HOURS,
                 "validation_hours": VALIDATION_HOURS,
                 "sequence_length": SEQUENCE_LENGTH,
-                "rf_estimators": 250,
-                "xgb_estimators": 300,
-                "lstm_epochs": 14,
-                "transformer_epochs": 12,
-                "nn_epochs": 16,
+                "rf_estimators": 400,
+                "xgb_estimators": 500,
+                "lstm_epochs": 40,
+                "transformer_epochs": 36,
+                "nn_epochs": 48,
             }
         )
         log_challenger_summary(challenger_results)
