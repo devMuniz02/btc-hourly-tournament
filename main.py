@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1h"
-LOOKBACK_HOURS = 2000
+LOOKBACK_HOURS = 5000
 VALIDATION_HOURS = 48
 SEQUENCE_LENGTH = 24
 SEED = 42
@@ -132,7 +132,18 @@ def fetch_ohlcv(
                 **extra_config,
             }
         )
-        candles = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
+        fetch_params: dict[str, Any] = {}
+        if limit > 1000:
+            fetch_params = {
+                "paginate": True,
+                "paginationCalls": math.ceil(limit / 1000),
+            }
+        candles = exchange.fetch_ohlcv(
+            symbol,
+            timeframe=TIMEFRAME,
+            limit=limit,
+            params=fetch_params,
+        )
         if len(candles) < required_candles:
             raise RuntimeError(
                 f"{exchange_id} returned too few candles ({len(candles)})."
@@ -1129,7 +1140,7 @@ def main() -> None:
     log_step("Fetch BTC/USDT market data")
     raw = fetch_ohlcv(
         limit=LOOKBACK_HOURS,
-        min_candles=1000,
+        min_candles=5000,
         retry_binanceus=True,
         retry_binanceus_attempts=3,
     )
