@@ -1,5 +1,5 @@
 {
-  "status": "success",
+  "status": "rerun_requested",
   "generated_at": "2026-03-17T04:04:33.710814+00:00",
   "registered_model_name": "btc-usdt-directional-classifier",
   "model_name": "NN",
@@ -14,5 +14,6 @@
   "reference_close": 74570.0,
   "price_to_beat": 74463.98,
   "symbol": "BTC/USDT",
-  "timeframe": "1h"
+  "timeframe": "1h",
+  "rerun_requested_at": "2026-03-17T04:17:51.654937+00:00"
 }
