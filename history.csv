@@ -1,7 +1,8 @@
-timestamp,predicted,actual,result,failed,status
-2026-03-16 17:00:00+00:00,1,1,1,0,validated
-2026-03-16 18:00:00+00:00,1,1,1,0,validated
-2026-03-16 19:00:00+00:00,0,1,0,0,validated
-2026-03-16 20:00:00+00:00,1,0,0,0,validated
-2026-03-16 22:00:00+00:00,0,1,0,0,validated
-2026-03-16 23:00:00+00:00,1,0,0,0,validated
+timestamp,predicted,actual,result,failed,status,reference_open,reference_close,target_close
+2026-03-16 17:00:00+00:00,1,1,1,0,validated,,,
+2026-03-16 18:00:00+00:00,1,1,1,0,validated,,,
+2026-03-16 19:00:00+00:00,0,1,0,0,validated,,,
+2026-03-16 20:00:00+00:00,1,0,0,0,validated,,,
+2026-03-16 22:00:00+00:00,0,1,0,0,validated,,,
+2026-03-16 23:00:00+00:00,1,0,0,0,validated,,,
+2026-03-17 00:00:00+00:00,1,0,0,0,validated,,74879.98,74757.81
