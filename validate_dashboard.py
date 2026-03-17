@@ -158,7 +158,10 @@ def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFra
     updated = history.copy()
     if not updated.empty:
         updated = updated[updated["timestamp"] != row["timestamp"]]
-    updated = pd.concat([updated, pd.DataFrame([row])], ignore_index=True)
+    if updated.empty:
+        updated = pd.DataFrame([row])
+    else:
+        updated.loc[len(updated)] = row
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated

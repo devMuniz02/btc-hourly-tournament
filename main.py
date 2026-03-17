@@ -19,12 +19,14 @@ from typing import Any
 import ccxt
 import joblib
 import mlflow
+import mlflow.artifacts
 import mlflow.pyfunc
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from mlflow import MlflowClient
+from mlflow.models import infer_signature
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.neural_network import MLPClassifier
@@ -42,6 +44,7 @@ DEVICE = torch.device("cpu")
 DEFAULT_EXPERIMENT = "btc-directional-tournament"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
+MODEL_ARTIFACT_NAME = "model"
 LAST_PREDICTION_PATH = Path("last_prediction.json")
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
@@ -757,6 +760,60 @@ def resolve_candidate_package_dir(model_root: str | Path) -> Path:
     )
 
 
+def download_model_root(version: Any, dst_path: str) -> str:
+    artifact_uris = [
+        getattr(version, "source", None),
+        f"models:/{version.name}/{version.version}",
+        f"runs:/{version.run_id}/{MODEL_ARTIFACT_NAME}",
+    ]
+    last_error: Exception | None = None
+    for artifact_uri in artifact_uris:
+        if not artifact_uri:
+            continue
+        try:
+            return mlflow.artifacts.download_artifacts(
+                artifact_uri=artifact_uri,
+                dst_path=dst_path,
+            )
+        except Exception as exc:
+            last_error = exc
+
+    try:
+        client = MlflowClient()
+        return client.download_artifacts(version.run_id, MODEL_ARTIFACT_NAME, dst_path)
+    except Exception as exc:
+        last_error = exc
+
+    if last_error is None:
+        raise RuntimeError("No artifact URI was available for the champion model.")
+    raise last_error
+
+
+def build_model_logging_inputs(
+    candidate: TournamentCandidate,
+    feature_rows: pd.DataFrame,
+) -> tuple[pd.DataFrame, Any]:
+    sample_size = max(candidate.sequence_length, min(len(feature_rows), candidate.sequence_length * 2))
+    input_example = feature_rows[candidate.feature_columns].tail(sample_size).copy()
+    predictions = pd.DataFrame(
+        {"prob_up": predict_candidate_probabilities(candidate, input_example)}
+    )
+    signature = infer_signature(input_example, predictions)
+    return input_example, signature
+
+
+def build_model_pip_requirements() -> list[str]:
+    return [
+        "mlflow==3.10.1",
+        "pandas",
+        "numpy",
+        "joblib",
+        "scikit-learn",
+        "xgboost",
+        "torch==2.10.0",
+    ]
+
+
 def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
@@ -769,11 +826,7 @@ def get_current_champion(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
-            local_model_root = client.download_artifacts(
-                version.run_id,
-                "model",
-                temp_dir,
-            )
+            local_model_root = download_model_root(version, temp_dir)
             package_dir = resolve_candidate_package_dir(local_model_root)
             candidate = load_candidate_package(package_dir)
         except Exception as exc:
@@ -846,12 +899,15 @@ def promote_champion(
     winner: dict[str, Any],
     validation_start: str,
     validation_end: str,
+    feature_rows: pd.DataFrame,
 ) -> str:
     log_step(f"Promote new champion: {winner['candidate'].name}")
     candidate: TournamentCandidate = winner["candidate"]
     with tempfile.TemporaryDirectory() as temp_dir:
         package_dir = Path(temp_dir) / ARTIFACT_SUBDIR
         save_candidate_package(candidate, package_dir)
+        input_example, signature = build_model_logging_inputs(candidate, feature_rows)
+        model_code_path = Path(__file__).with_name("mlflow_tournament_model.py")
 
         with mlflow.start_run(run_name=f"promote-{candidate.name}") as run:
             mlflow.set_tags(
@@ -870,10 +926,13 @@ def promote_champion(
                 }
             )
             mlflow.pyfunc.log_model(
-                artifact_path="model",
-                python_model=TournamentPyFuncModel(),
+                name=MODEL_ARTIFACT_NAME,
+                python_model=str(model_code_path),
                 artifacts={"model_dir": str(package_dir)},
                 registered_model_name=registered_model_name,
+                input_example=input_example,
+                signature=signature,
+                pip_requirements=build_model_pip_requirements(),
             )
 
             versions = client.search_model_versions(f"run_id = '{run.info.run_id}'")
@@ -1074,12 +1133,14 @@ def main() -> None:
         )
 
     if should_promote:
+        promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
         new_version = promote_champion(
             client=client,
             registered_model_name=registered_model_name,
             winner=best_challenger,
             validation_start=validation_start,
             validation_end=validation_end,
+            feature_rows=promotion_feature_rows,
         )
         print(
             f"Winner this hour: {best_challenger['name']} -> promoted to champion version {new_version}"

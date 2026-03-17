@@ -122,6 +122,7 @@ bitcoin/*.html
 bitcoin/saved_models/
 bitcoin/__pycache__/
 bitcoin/train.ipynb
+last_prediction.before_rerun.json
 
 # Weather and unrelated project files
 weather/
