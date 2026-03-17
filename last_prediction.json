@@ -1,5 +1,5 @@
 {
-  "status": "success",
+  "status": "rerun_requested",
   "generated_at": "2026-03-17T18:00:41.446764+00:00",
   "registered_model_name": "btc-usdt-directional-classifier",
   "model_name": "Transformer",
@@ -14,5 +14,6 @@
   "reference_close": 74479.02,
   "price_to_beat": 74523.76,
   "symbol": "BTC/USDT",
-  "timeframe": "1h"
+  "timeframe": "1h",
+  "rerun_requested_at": "2026-03-17T18:10:45.236032+00:00"
 }
