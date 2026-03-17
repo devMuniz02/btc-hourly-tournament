@@ -61,7 +61,7 @@ def fetch_recent_candles() -> pd.DataFrame:
 def resolve_actual_direction(
     candles: pd.DataFrame,
     prediction_record: dict[str, Any],
-) -> tuple[int, pd.Timestamp, float, float] | None:
+) -> tuple[int, pd.Timestamp, float, float, float] | None:
     reference_ts = pd.Timestamp(prediction_record["reference_candle_timestamp"])
     target_ts = pd.Timestamp(prediction_record["target_candle_timestamp"])
     now_utc = pd.Timestamp.now(tz="UTC")
@@ -77,9 +77,10 @@ def resolve_actual_direction(
         return None
 
     reference_open = float(indexed.loc[reference_ts, "open"])
+    reference_close = float(indexed.loc[reference_ts, "close"])
     target_open = float(indexed.loc[target_ts, "open"])
-    actual_label = int(target_open > reference_open)
-    return actual_label, target_ts, reference_open, target_open
+    actual_label = int(reference_close > reference_open)
+    return actual_label, target_ts, reference_open, reference_close, target_open
 
 
 def load_history() -> pd.DataFrame:
@@ -136,7 +137,21 @@ def prediction_already_recorded(history: pd.DataFrame, prediction_record: dict[s
     if history.empty:
         return False
     prediction_timestamp = get_prediction_timestamp(prediction_record)
-    return bool((history["timestamp"] == prediction_timestamp).any())
+    matching_rows = history[history["timestamp"] == prediction_timestamp]
+    if matching_rows.empty:
+        return False
+
+    for _, row in matching_rows.iterrows():
+        status = str(row.get("status", "")).strip().lower()
+        predicted_value = row.get("predicted")
+        predicted_text = "" if pd.isna(predicted_value) else str(predicted_value).strip()
+
+        if status == "failed":
+            return True
+        if status == "validated" and predicted_text != "":
+            return True
+
+    return False
 
 
 def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFrame:
@@ -278,18 +293,9 @@ def backfill_recent_history_prices(history: pd.DataFrame) -> pd.DataFrame:
     if history.empty:
         return history
 
-    needs_prices = history[
-        history["reference_open"].isna()
-        | history["reference_close"].isna()
-        | history["target_open"].isna()
-        | history["target_close"].isna()
-    ]
-    if needs_prices.empty:
-        return history
-
-    oldest_missing_ts = pd.Timestamp(needs_prices["timestamp"].min())
+    oldest_ts = pd.Timestamp(history["timestamp"].min())
     now_utc = pd.Timestamp.utcnow()
-    hours_needed = int(max((now_utc - oldest_missing_ts).total_seconds() // 3600 + 4, 48))
+    hours_needed = int(max((now_utc - oldest_ts).total_seconds() // 3600 + 4, 48))
     lookback_hours = min(max(hours_needed, 48), tournament.LOOKBACK_HOURS)
     try:
         candles = tournament.fetch_ohlcv(
@@ -309,18 +315,22 @@ def backfill_recent_history_prices(history: pd.DataFrame) -> pd.DataFrame:
         target_ts = pd.Timestamp(row["timestamp"])
         reference_ts = target_ts - pd.Timedelta(hours=1)
         if reference_ts in indexed.index:
-            if pd.isna(row["reference_open"]):
-                updated.at[idx, "reference_open"] = float(indexed.loc[reference_ts, "open"])
+            reference_open = float(indexed.loc[reference_ts, "open"])
+            reference_close = float(indexed.loc[reference_ts, "close"])
+            if pd.isna(row["reference_open"]) or float(row["reference_open"]) != reference_open:
+                updated.at[idx, "reference_open"] = reference_open
                 changed = True
-            if pd.isna(row["reference_close"]):
-                updated.at[idx, "reference_close"] = float(indexed.loc[reference_ts, "close"])
+            if pd.isna(row["reference_close"]) or float(row["reference_close"]) != reference_close:
+                updated.at[idx, "reference_close"] = reference_close
                 changed = True
         if target_ts in indexed.index:
-            if pd.isna(row["target_open"]):
-                updated.at[idx, "target_open"] = float(indexed.loc[target_ts, "open"])
+            target_open = float(indexed.loc[target_ts, "open"])
+            target_close = float(indexed.loc[target_ts, "close"])
+            if pd.isna(row["target_open"]) or float(row["target_open"]) != target_open:
+                updated.at[idx, "target_open"] = target_open
                 changed = True
-            if pd.isna(row["target_close"]):
-                updated.at[idx, "target_close"] = float(indexed.loc[target_ts, "close"])
+            if pd.isna(row["target_close"]) or float(row["target_close"]) != target_close:
+                updated.at[idx, "target_close"] = target_close
                 changed = True
 
     if changed:
@@ -338,10 +348,10 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
     for idx, row in updated.iterrows():
         if int(row.get("failed", 0)) == 1:
             continue
-        if pd.isna(row["reference_open"]) or pd.isna(row["target_open"]):
+        if pd.isna(row["reference_open"]) or pd.isna(row["reference_close"]):
             continue
 
-        actual_label = int(float(row["target_open"]) > float(row["reference_open"]))
+        actual_label = int(float(row["reference_close"]) > float(row["reference_open"]))
         predicted_value = row["predicted"]
         predicted_text = "" if pd.isna(predicted_value) else str(predicted_value).strip()
         if pd.isna(row["actual"]) or str(row["actual"]).strip() == "" or int(float(row["actual"])) != actual_label:
@@ -458,10 +468,9 @@ def render_dashboard(
             for spine in ax_trend.spines.values():
                 spine.set_visible(False)
         else:
-            scored["rolling_accuracy"] = scored["result"].rolling(
-                window=min(5, len(scored)),
-                min_periods=1,
-            ).mean() * 100
+            scored["running_accuracy"] = (
+                scored["result"].cumsum() / pd.Series(range(1, len(scored) + 1), index=scored.index)
+            ) * 100
             x_labels = [
                 pd.Timestamp(ts).strftime("%m-%d %H:%M") for ts in scored["timestamp"]
             ]
@@ -471,7 +480,7 @@ def render_dashboard(
             ]
             ax_trend.plot(
                 x_labels,
-                scored["rolling_accuracy"],
+                scored["running_accuracy"],
                 color="#1f3c4d",
                 linewidth=2.5,
                 marker="o",
@@ -480,7 +489,7 @@ def render_dashboard(
             )
             ax_trend.scatter(
                 x_labels,
-                scored["rolling_accuracy"],
+                scored["running_accuracy"],
                 c=point_colors,
                 s=55,
                 edgecolors="#fbf8f2",
@@ -504,8 +513,9 @@ def render_dashboard(
         recent_rows = [["--", "--", "--", "--", "--", "--"]]
     else:
         current_hour_start = pd.Timestamp.now(tz="UTC").floor("h")
+        latest_open_time = current_hour_start - pd.Timedelta(hours=1)
         recent_history = history[
-            history["timestamp"] < current_hour_start
+            history["timestamp"] <= latest_open_time + pd.Timedelta(hours=1)
         ].sort_values("timestamp", ascending=False).head(10).copy()
 
         def to_arrow(value: Any) -> str:
@@ -530,20 +540,16 @@ def render_dashboard(
 
         recent_rows = [
             [
-                format_dual_time(row["timestamp"]),
+                format_dual_time(pd.Timestamp(row["timestamp"]) - pd.Timedelta(hours=1)),
                 (
                     f"{float(row['reference_open']):,.2f}"
                     if pd.notna(row["reference_open"])
                     else "--"
                 ),
                 (
-                    f"{float(row['target_close']):,.2f}"
-                    if pd.notna(row["target_close"])
-                    else (
-                        f"{float(row['target_open']):,.2f}"
-                        if pd.notna(row["target_open"])
-                        else "--"
-                    )
+                    f"{float(row['reference_close']):,.2f}"
+                    if pd.notna(row["reference_close"])
+                    else "--"
                 ),
                 to_arrow(row["predicted"]),
                 to_arrow(row["actual"]),
@@ -554,7 +560,7 @@ def render_dashboard(
 
     recent_table = ax_chart.table(
         cellText=recent_rows,
-        colLabels=["Time", "Open Price", "Close Price", "Pred", "Actual", "Result"],
+        colLabels=["Open Time", "Open Price", "Close Price", "Pred", "Actual", "Result"],
         loc="center",
         cellLoc="center",
         colLoc="center",
@@ -833,7 +839,7 @@ def main() -> None:
         print("Target candle is not available yet. Dashboard refreshed without new validation row.")
         return
 
-    actual_label, target_timestamp, reference_open, target_open = actual
+    actual_label, target_timestamp, reference_open, reference_close, target_open = actual
     predicted_label = int(prediction_record["predicted_label"])
     result = int(predicted_label == actual_label)
 
@@ -847,7 +853,7 @@ def main() -> None:
             "failed": 0,
             "status": "validated",
             "reference_open": reference_open,
-            "reference_close": prediction_record.get("reference_close"),
+            "reference_close": reference_close,
             "target_open": target_open,
             "target_close": pd.NA,
         },
@@ -865,6 +871,7 @@ def main() -> None:
                 "actual": actual_label,
                 "result": result,
                 "reference_open": reference_open,
+                "reference_close": reference_close,
                 "target_open": target_open,
             },
             indent=2,
