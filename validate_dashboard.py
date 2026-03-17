@@ -203,12 +203,28 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
     if not missing_rows:
         return updated
 
-    missing_frame = pd.DataFrame(missing_rows)
     if updated.empty:
-        updated = missing_frame
+        updated = pd.DataFrame(
+            missing_rows,
+            columns=[
+                "timestamp",
+                "predicted",
+                "actual",
+                "result",
+                "failed",
+                "status",
+                "reference_open",
+                "reference_close",
+                "target_open",
+                "target_close",
+            ],
+        )
     else:
-        missing_frame = missing_frame.reindex(columns=updated.columns)
-        updated = pd.concat([updated, missing_frame], ignore_index=True)
+        next_index = len(updated)
+        for row in missing_rows:
+            for column in updated.columns:
+                updated.loc[next_index, column] = row.get(column, pd.NA)
+            next_index += 1
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated

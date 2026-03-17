@@ -741,6 +741,22 @@ class TournamentPyFuncModel(mlflow.pyfunc.PythonModel):
         return pd.DataFrame({"prob_up": probabilities})
 
 
+def resolve_candidate_package_dir(model_root: str | Path) -> Path:
+    root = Path(model_root)
+    candidate_dirs = [
+        root,
+        root / ARTIFACT_SUBDIR,
+        root / "artifacts" / ARTIFACT_SUBDIR,
+    ]
+    for candidate_dir in candidate_dirs:
+        if (candidate_dir / "config.json").exists():
+            return candidate_dir
+    raise FileNotFoundError(
+        "Could not find packaged champion model under "
+        f"{root}. Checked: {', '.join(str(path) for path in candidate_dirs)}"
+    )
+
+
 def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
@@ -751,28 +767,19 @@ def get_current_champion(
     except Exception:
         return None, None
 
-    candidate_paths = [
-        "model/artifacts/model_dir",
-        "model_dir",
-    ]
     with tempfile.TemporaryDirectory() as temp_dir:
-        candidate = None
-        last_error: Exception | None = None
-        for artifact_path in candidate_paths:
-            try:
-                local_model_dir = client.download_artifacts(
-                    version.run_id,
-                    artifact_path,
-                    temp_dir,
-                )
-                candidate = load_candidate_package(local_model_dir)
-                break
-            except Exception as exc:
-                last_error = exc
-        if candidate is None:
+        try:
+            local_model_root = client.download_artifacts(
+                version.run_id,
+                "model",
+                temp_dir,
+            )
+            package_dir = resolve_candidate_package_dir(local_model_root)
+            candidate = load_candidate_package(package_dir)
+        except Exception as exc:
             print(
                 "Champion alias exists but its artifacts could not be loaded. "
-                f"Proceeding without champion. Last error: {last_error}"
+                f"Proceeding without champion. Last error: {exc}"
             )
             return None, None
     metadata = {"version": version.version, "run_id": version.run_id}
