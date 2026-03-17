@@ -167,7 +167,7 @@ def remove_incomplete_validations(history: pd.DataFrame) -> pd.DataFrame:
 
 def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
-    latest_available_target = now_utc.floor("h")
+    latest_available_target = now_utc.floor("h") - pd.Timedelta(hours=1)
     expected_timestamps = [
         latest_available_target - pd.Timedelta(hours=offset)
         for offset in range(hours)
@@ -503,7 +503,10 @@ def render_dashboard(
     if history.empty:
         recent_rows = [["--", "--", "--", "--", "--", "--"]]
     else:
-        recent_history = history.sort_values("timestamp", ascending=False).head(10).copy()
+        current_hour_start = pd.Timestamp.now(tz="UTC").floor("h")
+        recent_history = history[
+            history["timestamp"] < current_hour_start
+        ].sort_values("timestamp", ascending=False).head(10).copy()
 
         def to_arrow(value: Any) -> str:
             if value == "" or pd.isna(value):

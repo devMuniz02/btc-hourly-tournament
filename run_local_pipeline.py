@@ -25,6 +25,9 @@ ARTIFACT_FILES = [
     ROOT / "assets" / "dashboard.png",
     ROOT / "last_prediction.json",
 ]
+NON_BLOCKING_LOCAL_FILES = [
+    LOG_PATH,
+]
 REQUIRED_ENV_VARS = [
     "MLFLOW_TRACKING_URI",
     "MLFLOW_TRACKING_USERNAME",
@@ -148,9 +151,17 @@ def worktree_clean() -> bool:
 def has_non_artifact_worktree_changes() -> bool:
     status = run_git_command("status", "--porcelain")
     artifact_paths = {str(path.relative_to(ROOT)).replace("\\", "/") for path in ARTIFACT_FILES}
+    non_blocking_paths = {
+        str(path.relative_to(ROOT)).replace("\\", "/")
+        for path in NON_BLOCKING_LOCAL_FILES
+    }
     for line in status.stdout.splitlines():
         path = line[3:].strip().replace("\\", "/")
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
         if path and path not in artifact_paths:
+            if path in non_blocking_paths:
+                continue
             return True
     return False
 
