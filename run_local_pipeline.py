@@ -143,6 +143,13 @@ def rebase_in_progress() -> bool:
     return (GIT_DIR / "rebase-merge").exists() or (GIT_DIR / "rebase-apply").exists()
 
 
+def print_git_result(result: subprocess.CompletedProcess[str]) -> None:
+    if result.stdout.strip():
+        print(result.stdout, end="")
+    if result.stderr.strip():
+        print(result.stderr, end="")
+
+
 def worktree_clean() -> bool:
     status = run_git_command("status", "--porcelain")
     return not status.stdout.strip()
@@ -164,6 +171,78 @@ def has_non_artifact_worktree_changes() -> bool:
                 continue
             return True
     return False
+
+
+def ahead_behind_counts() -> tuple[int, int]:
+    counts_result = run_git_command("rev-list", "--left-right", "--count", "HEAD...origin/main")
+    if counts_result.returncode != 0:
+        print_git_result(counts_result)
+        raise RuntimeError("Failed to compare HEAD with origin/main.")
+    ahead_str, behind_str = counts_result.stdout.strip().split()
+    return int(ahead_str), int(behind_str)
+
+
+def reset_hard_to_origin_main(reason: str) -> None:
+    print(reason)
+    reset_result = run_git_command("reset", "--hard", "origin/main")
+    if reset_result.returncode != 0:
+        print_git_result(reset_result)
+        raise RuntimeError("Failed to reset the local branch to origin/main.")
+    print_git_result(reset_result)
+
+
+def recover_stale_rebase() -> None:
+    if not rebase_in_progress():
+        return
+    print("Detected an in-progress git rebase.")
+    if not worktree_clean():
+        raise RuntimeError(
+            "Git rebase already in progress with local changes. Resolve it manually before running the local pipeline."
+        )
+    continue_result = run_git_command("rebase", "--continue")
+    if continue_result.returncode == 0:
+        print_git_result(continue_result)
+        return
+    abort_result = run_git_command("rebase", "--abort")
+    if abort_result.returncode != 0:
+        print_git_result(continue_result)
+        print_git_result(abort_result)
+        raise RuntimeError("Failed to recover from an existing git rebase.")
+    print("Aborted stale git rebase before continuing.")
+
+
+def sync_with_origin_main() -> None:
+    log_step("Sync local branch with origin/main")
+    if has_non_artifact_worktree_changes():
+        print("Skipping sync because the working tree has non-artifact local changes.")
+        return
+
+    recover_stale_rebase()
+
+    fetch_result = run_git_command("fetch", "origin", "main")
+    if fetch_result.returncode != 0:
+        print_git_result(fetch_result)
+        raise RuntimeError("Failed to fetch origin/main before running the local pipeline.")
+    print_git_result(fetch_result)
+
+    ahead, behind = ahead_behind_counts()
+    print(f"ahead={ahead}")
+    print(f"behind={behind}")
+
+    if ahead > 0 and behind > 0:
+        reset_hard_to_origin_main(
+            "Local branch contains unpushed commits and is behind origin/main. Discarding local commits and resetting to origin/main."
+        )
+        return
+    if behind == 0:
+        print("Local branch already includes origin/main.")
+        return
+
+    pull_result = run_git_command("pull", "--rebase", "origin", "main")
+    if pull_result.returncode != 0:
+        print_git_result(pull_result)
+        raise RuntimeError("Failed to update the local branch from origin/main before generating artifacts.")
+    print_git_result(pull_result)
 
 
 def commit_artifacts(commit_message: str) -> bool:
@@ -193,50 +272,70 @@ def commit_artifacts(commit_message: str) -> bool:
     return True
 
 
-def push_current_head() -> None:
+def push_current_head() -> bool:
     log_step("Push artifacts to origin/main")
     if has_non_artifact_worktree_changes():
         print("Skipping push because the working tree has non-artifact local changes.")
-        return
-    if rebase_in_progress():
-        print("Detected an in-progress git rebase.")
-        if worktree_clean():
-            continue_result = run_git_command("rebase", "--continue")
-            if continue_result.returncode == 0:
-                if continue_result.stdout.strip():
-                    print(continue_result.stdout, end="")
-                if continue_result.stderr.strip():
-                    print(continue_result.stderr, end="")
-            else:
-                abort_result = run_git_command("rebase", "--abort")
-                if abort_result.returncode != 0:
-                    print(continue_result.stdout, end="")
-                    print(continue_result.stderr, end="")
-                    print(abort_result.stdout, end="")
-                    print(abort_result.stderr, end="")
-                    raise RuntimeError("Failed to recover from an existing git rebase.")
-                print("Aborted stale git rebase before pushing artifacts.")
-        else:
-            print("Skipping push because a git rebase is already in progress with local changes.")
-            return
-    pull_result = run_git_command("pull", "--rebase", "origin", "main")
-    if pull_result.returncode != 0:
-        print(pull_result.stdout, end="")
-        print(pull_result.stderr, end="")
-        raise RuntimeError("Failed to rebase local artifacts onto origin/main.")
-    if pull_result.stdout.strip():
-        print(pull_result.stdout, end="")
-    if pull_result.stderr.strip():
-        print(pull_result.stderr, end="")
+        return True
+    recover_stale_rebase()
+
+    fetch_result = run_git_command("fetch", "origin", "main")
+    if fetch_result.returncode != 0:
+        print_git_result(fetch_result)
+        raise RuntimeError("Failed to fetch origin/main before pushing artifacts.")
+    print_git_result(fetch_result)
+
+    _, behind = ahead_behind_counts()
+    if behind > 0:
+        reset_hard_to_origin_main(
+            "origin/main changed during the local run. Resetting to origin/main and retrying the pipeline on the latest remote commit."
+        )
+        return False
 
     push_result = run_git_command("push", "origin", "HEAD:main")
     if push_result.returncode != 0:
-        print(push_result.stdout, end="")
-        print(push_result.stderr, end="")
+        print_git_result(push_result)
         raise RuntimeError("Failed to push local artifacts to origin/main.")
-    print(push_result.stdout, end="")
-    if push_result.stderr.strip():
-        print(push_result.stderr, end="")
+    print_git_result(push_result)
+    return True
+
+
+def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
+    if not args.skip_git:
+        sync_with_origin_main()
+
+    validate_exit_code = run_python_script("validate_dashboard.py")
+
+    run_tournament = should_run_tournament(args.event_name)
+
+    if not args.skip_git:
+        committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
+        if committed and not args.skip_push and not run_tournament:
+            if not push_current_head():
+                return 0, True
+
+    if validate_exit_code != 0:
+        return validate_exit_code, False
+
+    tournament_exit_code = 0
+    if run_tournament:
+        tournament_exit_code = run_python_script("main.py")
+        refresh_exit_code = run_python_script("validate_dashboard.py")
+        if refresh_exit_code != 0 and tournament_exit_code == 0:
+            tournament_exit_code = refresh_exit_code
+
+    if not args.skip_git:
+        commit_message = (
+            "Local run: update BTC bot artifacts [skip ci]"
+            if run_tournament
+            else "Local run: update BTC validation dashboard [skip ci]"
+        )
+        committed = commit_artifacts(commit_message)
+        if committed and not args.skip_push:
+            if not push_current_head():
+                return 0, True
+
+    return tournament_exit_code, False
 
 
 def parse_args() -> argparse.Namespace:
@@ -272,37 +371,14 @@ def main() -> int:
             load_dotenv(ROOT / ".env")
             os.environ["BTC_EXCHANGE_MODE"] = "binance"
             validate_required_env()
-
-            validate_exit_code = run_python_script("validate_dashboard.py")
-
-            run_tournament = should_run_tournament(args.event_name)
-
-            if not args.skip_git:
-                committed = commit_artifacts("Local run: update BTC validation dashboard [skip ci]")
-                if committed and not args.skip_push and not run_tournament:
-                    push_current_head()
-
-            if validate_exit_code != 0:
-                return validate_exit_code
-
-            tournament_exit_code = 0
-            if run_tournament:
-                tournament_exit_code = run_python_script("main.py")
-                refresh_exit_code = run_python_script("validate_dashboard.py")
-                if refresh_exit_code != 0 and tournament_exit_code == 0:
-                    tournament_exit_code = refresh_exit_code
-
-            if not args.skip_git:
-                commit_message = (
-                    "Local run: update BTC bot artifacts [skip ci]"
-                    if run_tournament
-                    else "Local run: update BTC validation dashboard [skip ci]"
-                )
-                committed = commit_artifacts(commit_message)
-                if committed and not args.skip_push:
-                    push_current_head()
-
-            return tournament_exit_code
+            max_attempts = 2 if not args.skip_git and not args.skip_push else 1
+            for attempt in range(1, max_attempts + 1):
+                if attempt > 1:
+                    log_step(f"Retry pipeline on latest origin/main (attempt {attempt}/{max_attempts})")
+                exit_code, should_retry = run_pipeline_once(args)
+                if not should_retry:
+                    return exit_code
+            raise RuntimeError("Failed to push artifacts because origin/main changed repeatedly during the local run.")
 
 
 if __name__ == "__main__":
