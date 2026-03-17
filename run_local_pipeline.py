@@ -80,9 +80,9 @@ def validate_required_env() -> None:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 
-def run_python_script(script_name: str) -> int:
+def run_python_script(script_name: str, script_args: list[str] | None = None) -> int:
     log_step(f"Run {script_name}")
-    command = [sys.executable, script_name]
+    command = [sys.executable, script_name, *(script_args or [])]
     process = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -319,7 +319,10 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
 
     tournament_exit_code = 0
     if run_tournament:
-        tournament_exit_code = run_python_script("main.py")
+        tournament_args: list[str] = []
+        if args.reset_champion_from_challenger:
+            tournament_args.append("--reset-champion-from-challenger")
+        tournament_exit_code = run_python_script("main.py", tournament_args)
         refresh_exit_code = run_python_script("validate_dashboard.py")
         if refresh_exit_code != 0 and tournament_exit_code == 0:
             tournament_exit_code = refresh_exit_code
@@ -357,6 +360,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-git",
         action="store_true",
         help="Do not commit or push generated artifacts.",
+    )
+    parser.add_argument(
+        "--reset-champion-from-challenger",
+        action="store_true",
+        help="Ignore the current champion comparison and choose from the top challenger only.",
     )
     return parser.parse_args()
 

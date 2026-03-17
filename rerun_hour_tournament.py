@@ -36,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run the rerun without committing or pushing generated artifacts.",
     )
+    parser.add_argument(
+        "--reset-champion-from-challenger",
+        action="store_true",
+        help="Ignore the stored champion and choose from the current top challenger only.",
+    )
     return parser.parse_args()
 
 
@@ -94,6 +99,8 @@ def main() -> int:
         command.append("--skip-push")
     if args.skip_git:
         command.append("--skip-git")
+    if args.reset_champion_from_challenger:
+        command.append("--reset-champion-from-challenger")
 
     completed = subprocess.run(command, cwd=ROOT, check=False)
     return completed.returncode

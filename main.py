@@ -5,6 +5,7 @@ Directional BTC/USDT model tournament with MLflow registry promotion on DagsHub.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -1106,7 +1107,20 @@ def write_failed_prediction_record(exc: Exception) -> None:
     )
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the BTC directional tournament and optionally reset the champion from challengers."
+    )
+    parser.add_argument(
+        "--reset-champion-from-challenger",
+        action="store_true",
+        help="Ignore the current champion comparison and choose from the top challenger only.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     log_step("Initialize tournament")
     set_seed()
     registered_model_name = configure_tracking()
@@ -1130,19 +1144,22 @@ def main() -> None:
     challengers = train_challengers(train_df, valid_df)
     challenger_results = build_results(challengers, train_df, valid_df, future_row)
 
-    champion_candidate, champion_meta = get_current_champion(client, registered_model_name)
     all_results = list(challenger_results)
     champion_result: dict[str, Any] | None = None
-    if champion_candidate is not None and champion_meta is not None:
-        champion_result = evaluate_champion(
-            champion_candidate,
-            train_df,
-            valid_df,
-            future_row,
-        )
-        champion_result["name"] = f"{champion_result['name']} (champion)"
-        champion_result["registry_version"] = champion_meta["version"]
-        all_results.append(champion_result)
+    if args.reset_champion_from_challenger:
+        print("Champion comparison disabled. Selecting from the current challenger leaderboard only.")
+    else:
+        champion_candidate, champion_meta = get_current_champion(client, registered_model_name)
+        if champion_candidate is not None and champion_meta is not None:
+            champion_result = evaluate_champion(
+                champion_candidate,
+                train_df,
+                valid_df,
+                future_row,
+            )
+            champion_result["name"] = f"{champion_result['name']} (champion)"
+            champion_result["registry_version"] = champion_meta["version"]
+            all_results.append(champion_result)
 
     best_challenger = sorted(challenger_results, key=ranking_key)[0]
     null_model_block = (
