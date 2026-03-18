@@ -14,6 +14,7 @@ import tempfile
 import time
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from mlflow import MlflowClient
 from mlflow.models import infer_signature
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
@@ -40,9 +42,11 @@ TIMEFRAME = "1h"
 LOOKBACK_HOURS = 5000
 VALIDATION_HOURS = 48
 SEQUENCE_LENGTH = 24
+CROSS_VALIDATION_FOLDS = 5
 SEED = 42
 DEVICE = torch.device("cpu")
-DEFAULT_EXPERIMENT = "btc-tourney"
+FEATURE_PREPROCESSOR_NAME = "standard_scaler"
+DEFAULT_EXPERIMENT_PREFIX = "btc"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
 MODEL_ARTIFACT_NAME = "model"
@@ -80,6 +84,14 @@ def get_env_str(name: str) -> str | None:
     return value or None
 
 
+def build_experiment_name() -> str:
+    now_utc = datetime.now(timezone.utc)
+    return (
+        f"{DEFAULT_EXPERIMENT_PREFIX}-"
+        f"{now_utc.hour:02d}:00_{now_utc.day}_{now_utc.month}"
+    )
+
+
 def get_exchange_candidates() -> tuple[
     list[tuple[str, str, dict[str, Any]]],
     tuple[str, str, dict[str, Any]] | None,
@@ -104,8 +116,9 @@ def configure_tracking() -> str:
         raise RuntimeError("MLFLOW_TRACKING_PASSWORD is required.")
 
     mlflow.set_tracking_uri(tracking_uri)
-    experiment_name = get_env_str("MLFLOW_EXPERIMENT") or DEFAULT_EXPERIMENT
+    experiment_name = build_experiment_name()
     mlflow.set_experiment(experiment_name)
+    print(f"Using MLflow experiment: {experiment_name} (UTC)")
     return get_env_str("MLFLOW_MODEL_NAME") or DEFAULT_MODEL_NAME
 
 
@@ -422,7 +435,7 @@ def prepare_sequence_splits(
 ) -> dict[str, np.ndarray | StandardScaler]:
     train_features = train_df[feature_columns].to_numpy(dtype=np.float32)
     sequence_frame = pd.concat([train_df, valid_df], ignore_index=True)
-    scaler = StandardScaler().fit(train_features)
+    scaler = build_feature_scaler(train_features)
     scaled_sequence_features = scaler.transform(
         sequence_frame[feature_columns].to_numpy(dtype=np.float32)
     )
@@ -541,6 +554,232 @@ class TournamentCandidate:
     scaler: StandardScaler | None = None
 
 
+def build_feature_scaler(features: np.ndarray) -> StandardScaler:
+    # Normalize every feature dimension from train-only statistics to avoid one input scale dominating training.
+    return StandardScaler().fit(features)
+
+
+def prepare_full_sequence_training_data(
+    labeled_df: pd.DataFrame,
+    feature_columns: list[str],
+    seq_len: int,
+) -> dict[str, np.ndarray | StandardScaler]:
+    features = labeled_df[feature_columns].to_numpy(dtype=np.float32)
+    scaler = build_feature_scaler(features)
+    scaled_features = scaler.transform(features)
+    labels = labeled_df["target"].to_numpy(dtype=np.float32)
+    indices = np.arange(len(labeled_df))
+    seq_x, seq_y = build_sequence_dataset(
+        features=scaled_features,
+        labels=labels,
+        indices=indices,
+        seq_len=seq_len,
+    )
+    if len(seq_x) == 0:
+        raise RuntimeError("Could not build sequence dataset from labeled data.")
+    return {
+        "scaler": scaler,
+        "seq_x": seq_x,
+        "seq_y": seq_y,
+        "flat_x": flatten_sequence_features(seq_x),
+    }
+
+
+def build_challenger_candidates(train_seq_y: np.ndarray, scaler: StandardScaler) -> list[TournamentCandidate]:
+    scale_pos_weight = max(
+        float((len(train_seq_y) - train_seq_y.sum()) / max(train_seq_y.sum(), 1.0)),
+        1.0,
+    )
+    return [
+        TournamentCandidate(
+            name="RandomForest",
+            family="rf",
+            model=RandomForestClassifier(
+                n_estimators=400,
+                max_depth=12,
+                min_samples_leaf=2,
+                class_weight="balanced_subsample",
+                random_state=SEED,
+                n_jobs=-1,
+            ),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+        TournamentCandidate(
+            name="XGBoost",
+            family="xgb",
+            model=XGBClassifier(
+                n_estimators=500,
+                max_depth=5,
+                learning_rate=0.03,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                eval_metric="logloss",
+                scale_pos_weight=scale_pos_weight,
+                random_state=SEED,
+                n_jobs=2,
+            ),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+        TournamentCandidate(
+            name="MLPClassifier",
+            family="mlp_sklearn",
+            model=MLPClassifier(
+                hidden_layer_sizes=(256, 128, 64),
+                activation="relu",
+                alpha=1e-4,
+                batch_size=32,
+                learning_rate_init=6e-4,
+                max_iter=500,
+                random_state=SEED,
+                early_stopping=True,
+                validation_fraction=0.15,
+                n_iter_no_change=20,
+            ),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+        TournamentCandidate(
+            name="LSTM",
+            family="lstm",
+            model=LSTMClassifier(input_dim=len(FEATURE_COLUMNS), hidden_dim=64),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+        TournamentCandidate(
+            name="Transformer",
+            family="transformer",
+            model=TransformerClassifier(
+                input_dim=len(FEATURE_COLUMNS),
+                model_dim=48,
+                num_heads=4,
+                num_layers=3,
+            ),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+        TournamentCandidate(
+            name="NN",
+            family="nn",
+            model=SequenceMLPClassifier(
+                seq_len=SEQUENCE_LENGTH,
+                input_dim=len(FEATURE_COLUMNS),
+            ),
+            feature_columns=FEATURE_COLUMNS,
+            sequence_length=SEQUENCE_LENGTH,
+            scaler=scaler,
+        ),
+    ]
+
+
+def fit_candidate(
+    candidate: TournamentCandidate,
+    train_flat_x: np.ndarray,
+    train_seq_x: np.ndarray,
+    train_seq_y: np.ndarray,
+    valid_flat_x: np.ndarray | None = None,
+    valid_seq_x: np.ndarray | None = None,
+    valid_seq_y: np.ndarray | None = None,
+) -> TournamentCandidate:
+    if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
+        candidate.model.fit(train_flat_x, train_seq_y)
+        return candidate
+    if valid_seq_x is None or valid_seq_y is None:
+        valid_seq_x = train_seq_x
+        valid_seq_y = train_seq_y
+    if candidate.family == "lstm":
+        candidate.model = train_torch_classifier(
+            candidate.model,
+            train_seq_x,
+            train_seq_y,
+            valid_seq_x,
+            valid_seq_y,
+            epochs=40,
+            learning_rate=6e-4,
+        )
+    elif candidate.family == "transformer":
+        candidate.model = train_torch_classifier(
+            candidate.model,
+            train_seq_x,
+            train_seq_y,
+            valid_seq_x,
+            valid_seq_y,
+            epochs=36,
+            learning_rate=5e-4,
+        )
+    elif candidate.family == "nn":
+        candidate.model = train_torch_classifier(
+            candidate.model,
+            train_seq_x,
+            train_seq_y,
+            valid_seq_x,
+            valid_seq_y,
+            epochs=48,
+            learning_rate=7e-4,
+        )
+    else:
+        raise ValueError(f"Unsupported challenger family: {candidate.family}")
+    return candidate
+
+
+def run_challenger_cross_validation(
+    labeled_df: pd.DataFrame,
+    folds: int = CROSS_VALIDATION_FOLDS,
+) -> dict[str, dict[str, float]]:
+    log_step(f"Run {folds}-fold time-series cross-validation")
+    splitter = TimeSeriesSplit(n_splits=folds)
+    fold_metrics: dict[str, list[dict[str, float]]] = {}
+
+    for fold_index, (train_idx, valid_idx) in enumerate(splitter.split(labeled_df), start=1):
+        train_fold = labeled_df.iloc[train_idx].reset_index(drop=True)
+        valid_fold = labeled_df.iloc[valid_idx].reset_index(drop=True)
+        if len(train_fold) <= SEQUENCE_LENGTH or len(valid_fold) == 0:
+            raise RuntimeError("Cross-validation fold is too small for the sequence models.")
+
+        fold_splits = prepare_sequence_splits(train_fold, valid_fold, FEATURE_COLUMNS, SEQUENCE_LENGTH)
+        candidates = build_challenger_candidates(
+            train_seq_y=fold_splits["train_seq_y"],
+            scaler=fold_splits["scaler"],
+        )
+        print(f"Cross-validation fold {fold_index}/{folds}", flush=True)
+        for candidate in candidates:
+            print(f"  Fold {fold_index}: training {candidate.name}", flush=True)
+            fit_candidate(
+                candidate,
+                train_flat_x=fold_splits["train_flat_x"],
+                train_seq_x=fold_splits["train_seq_x"],
+                train_seq_y=fold_splits["train_seq_y"],
+                valid_flat_x=fold_splits["valid_flat_x"],
+                valid_seq_x=fold_splits["valid_seq_x"],
+                valid_seq_y=fold_splits["valid_seq_y"],
+            )
+
+            eval_frame = pd.concat([train_fold, valid_fold], ignore_index=True)
+            valid_start = len(train_fold)
+            valid_labels = valid_fold["target"].to_numpy(dtype=np.int32)
+            fold_probs = predict_candidate_probabilities(candidate, eval_frame)[valid_start:]
+            if np.isnan(fold_probs).any():
+                raise RuntimeError(
+                    f"{candidate.name} produced incomplete cross-validation output on fold {fold_index}."
+                )
+            metrics = evaluate_probabilities(fold_probs, valid_labels)
+            fold_metrics.setdefault(candidate.family, []).append(metrics)
+
+    summary: dict[str, dict[str, float]] = {}
+    for family, metrics_list in fold_metrics.items():
+        summary[family] = {
+            "cv_accuracy": float(np.mean([metrics["accuracy"] for metrics in metrics_list])),
+            "cv_f1": float(np.mean([metrics["f1"] for metrics in metrics_list])),
+        }
+    return summary
+
+
 def prediction_to_signal(probability: float) -> str:
     return "UP" if probability >= 0.5 else "DOWN"
 
@@ -572,6 +811,8 @@ def serialize_result(
         "source": result["source"],
         "accuracy": float(result["accuracy"]),
         "f1": float(result["f1"]),
+        "cv_accuracy": float(result.get("cv_accuracy", result["accuracy"])),
+        "cv_f1": float(result.get("cv_f1", result["f1"])),
         "probability_up": float(result["next_probability"]),
         "predicted_signal": result["next_signal"],
         "predicted_label": int(result["next_probability"] >= 0.5),
@@ -608,142 +849,52 @@ def predict_candidate_probabilities(
 def train_challengers(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
-) -> list[TournamentCandidate]:
+) -> tuple[list[TournamentCandidate], dict[str, dict[str, float]]]:
     log_step("Prepare challenger datasets")
+    cv_summary = run_challenger_cross_validation(train_df)
     sequence_splits = prepare_sequence_splits(train_df, valid_df, FEATURE_COLUMNS, SEQUENCE_LENGTH)
-    seq_scaler = sequence_splits["scaler"]
-    train_flat_x = sequence_splits["train_flat_x"]
-    valid_flat_x = sequence_splits["valid_flat_x"]
-    train_seq_x = sequence_splits["train_seq_x"]
-    train_seq_y = sequence_splits["train_seq_y"]
-    valid_seq_x = sequence_splits["valid_seq_x"]
-    valid_seq_y = sequence_splits["valid_seq_y"]
-
-    challengers = [
-        TournamentCandidate(
-            name="RandomForest",
-            family="rf",
-            model=RandomForestClassifier(
-                n_estimators=400,
-                max_depth=12,
-                min_samples_leaf=2,
-                class_weight="balanced_subsample",
-                random_state=SEED,
-                n_jobs=-1,
-            ),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-        TournamentCandidate(
-            name="XGBoost",
-            family="xgb",
-            model=XGBClassifier(
-                n_estimators=500,
-                max_depth=5,
-                learning_rate=0.03,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                eval_metric="logloss",
-                scale_pos_weight=max(float((len(train_seq_y) - train_seq_y.sum()) / max(train_seq_y.sum(), 1.0)), 1.0),
-                random_state=SEED,
-                n_jobs=2,
-            ),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-        TournamentCandidate(
-            name="MLPClassifier",
-            family="mlp_sklearn",
-            model=MLPClassifier(
-                hidden_layer_sizes=(256, 128, 64),
-                activation="relu",
-                alpha=1e-4,
-                batch_size=32,
-                learning_rate_init=6e-4,
-                max_iter=500,
-                random_state=SEED,
-                early_stopping=True,
-                validation_fraction=0.15,
-                n_iter_no_change=20,
-            ),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-        TournamentCandidate(
-            name="LSTM",
-            family="lstm",
-            model=LSTMClassifier(input_dim=len(FEATURE_COLUMNS), hidden_dim=64),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-        TournamentCandidate(
-            name="Transformer",
-            family="transformer",
-            model=TransformerClassifier(
-                input_dim=len(FEATURE_COLUMNS),
-                model_dim=48,
-                num_heads=4,
-                num_layers=3,
-            ),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-        TournamentCandidate(
-            name="NN",
-            family="nn",
-            model=SequenceMLPClassifier(
-                seq_len=SEQUENCE_LENGTH,
-                input_dim=len(FEATURE_COLUMNS),
-            ),
-            feature_columns=FEATURE_COLUMNS,
-            sequence_length=SEQUENCE_LENGTH,
-            scaler=seq_scaler,
-        ),
-    ]
+    challengers = build_challenger_candidates(
+        train_seq_y=sequence_splits["train_seq_y"],
+        scaler=sequence_splits["scaler"],
+    )
 
     for candidate in challengers:
         print(f"Training challenger: {candidate.name}", flush=True)
-        if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
-            candidate.model.fit(train_flat_x, train_seq_y)
-        elif candidate.family == "lstm":
-            candidate.model = train_torch_classifier(
-                candidate.model,
-                train_seq_x,
-                train_seq_y,
-                valid_seq_x,
-                valid_seq_y,
-                epochs=40,
-                learning_rate=6e-4,
-            )
-        elif candidate.family == "transformer":
-            candidate.model = train_torch_classifier(
-                candidate.model,
-                train_seq_x,
-                train_seq_y,
-                valid_seq_x,
-                valid_seq_y,
-                epochs=36,
-                learning_rate=5e-4,
-            )
-        elif candidate.family == "nn":
-            candidate.model = train_torch_classifier(
-                candidate.model,
-                train_seq_x,
-                train_seq_y,
-                valid_seq_x,
-                valid_seq_y,
-                epochs=48,
-                learning_rate=7e-4,
-            )
-        else:
-            raise ValueError(f"Unsupported challenger family: {candidate.family}")
+        fit_candidate(
+            candidate,
+            train_flat_x=sequence_splits["train_flat_x"],
+            train_seq_x=sequence_splits["train_seq_x"],
+            train_seq_y=sequence_splits["train_seq_y"],
+            valid_flat_x=sequence_splits["valid_flat_x"],
+            valid_seq_x=sequence_splits["valid_seq_x"],
+            valid_seq_y=sequence_splits["valid_seq_y"],
+        )
         print(f"Finished challenger: {candidate.name}", flush=True)
 
+    return challengers, cv_summary
+
+
+def retrain_challengers_on_full_data(
+    labeled_df: pd.DataFrame,
+) -> list[TournamentCandidate]:
+    log_step("Retrain challengers on all labeled data")
+    training_data = prepare_full_sequence_training_data(
+        labeled_df,
+        FEATURE_COLUMNS,
+        SEQUENCE_LENGTH,
+    )
+    challengers = build_challenger_candidates(
+        train_seq_y=training_data["seq_y"],
+        scaler=training_data["scaler"],
+    )
+    for candidate in challengers:
+        print(f"Refitting challenger on full data: {candidate.name}", flush=True)
+        fit_candidate(
+            candidate,
+            train_flat_x=training_data["flat_x"],
+            train_seq_x=training_data["seq_x"],
+            train_seq_y=training_data["seq_y"],
+        )
     return challengers
 
 
@@ -752,6 +903,7 @@ def build_results(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
+    cv_summary: dict[str, dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     log_step("Evaluate challengers on validation window")
     eval_frame = pd.concat([train_df, valid_df], ignore_index=True)
@@ -767,6 +919,7 @@ def build_results(
             raise RuntimeError(f"{candidate.name} produced incomplete validation output.")
         metrics = evaluate_probabilities(valid_probs, actual_valid)
         next_probability = float(predict_candidate_probabilities(candidate, prediction_frame)[-1])
+        cv_metrics = (cv_summary or {}).get(candidate.family, {})
         results.append(
             {
                 "name": candidate.name,
@@ -775,6 +928,8 @@ def build_results(
                 "candidate": candidate,
                 "accuracy": metrics["accuracy"],
                 "f1": metrics["f1"],
+                "cv_accuracy": float(cv_metrics.get("cv_accuracy", metrics["accuracy"])),
+                "cv_f1": float(cv_metrics.get("cv_f1", metrics["f1"])),
                 "next_probability": next_probability,
                 "next_signal": prediction_to_signal(next_probability),
             }
@@ -789,6 +944,10 @@ def save_candidate_package(candidate: TournamentCandidate, output_dir: Path) -> 
         "family": candidate.family,
         "feature_columns": candidate.feature_columns,
         "sequence_length": candidate.sequence_length,
+        "preprocessing": {
+            "feature_scaler": FEATURE_PREPROCESSOR_NAME,
+            "normalized_features": True,
+        },
     }
 
     if candidate.scaler is not None:
@@ -838,6 +997,11 @@ def load_candidate_package(model_dir: str | Path) -> TournamentCandidate:
     scaler_path = package_dir / "scaler.joblib"
     if scaler_path.exists():
         candidate.scaler = joblib.load(scaler_path)
+    elif config.get("preprocessing", {}).get("normalized_features"):
+        print(
+            f"Warning: normalized model package for {candidate.name} is missing scaler.joblib. "
+            "Predictions may not match training-time preprocessing."
+        )
 
     if candidate.family in {"rf", "xgb", "mlp_sklearn"}:
         candidate.model = joblib.load(package_dir / "model.joblib")
@@ -1008,6 +1172,8 @@ def log_challenger_summary(
             {
                 f"{metric_prefix}_accuracy": result["accuracy"],
                 f"{metric_prefix}_f1": result["f1"],
+                f"{metric_prefix}_cv_accuracy": result.get("cv_accuracy", result["accuracy"]),
+                f"{metric_prefix}_cv_f1": result.get("cv_f1", result["f1"]),
                 f"{metric_prefix}_next_probability": result["next_probability"],
             }
         )
@@ -1017,11 +1183,63 @@ def log_challenger_summary(
                 "family": result["family"],
                 "accuracy": result["accuracy"],
                 "f1": result["f1"],
+                "cv_accuracy": result.get("cv_accuracy", result["accuracy"]),
+                "cv_f1": result.get("cv_f1", result["f1"]),
                 "next_probability": result["next_probability"],
                 "next_signal": result["next_signal"],
             }
         )
     mlflow.log_text(json.dumps(summary, indent=2), "challenger_summary.json")
+
+
+def log_comparison_metrics(
+    active_results_by_family: dict[str, dict[str, Any]],
+    active_result: dict[str, Any],
+) -> None:
+    metrics: dict[str, float] = {
+        "best_accuracy": float(active_result["accuracy"]),
+        "best_f1": float(active_result["f1"]),
+        "best_cv_accuracy": float(active_result.get("cv_accuracy", active_result["accuracy"])),
+        "best_cv_f1": float(active_result.get("cv_f1", active_result["f1"])),
+        "best_probability_up": float(active_result["next_probability"]),
+        "best_predicted_label": float(active_result["next_probability"] >= 0.5),
+    }
+    tags = {
+        "best_model_name": active_result["candidate"].name,
+        "best_model_family": active_result["family"],
+        "best_model_source": active_result["source"],
+        "best_predicted_signal": active_result["next_signal"],
+        "feature_preprocessor": FEATURE_PREPROCESSOR_NAME,
+        "features_normalized": "true",
+    }
+
+    ordered_results = sorted(active_results_by_family.values(), key=ranking_key)
+    family_rank_map = {
+        result["family"]: rank for rank, result in enumerate(ordered_results, start=1)
+    }
+
+    for family, result in sorted(active_results_by_family.items()):
+        family_prefix = family.replace("-", "_")
+        metrics.update(
+            {
+                f"{family_prefix}_accuracy": float(result["accuracy"]),
+                f"{family_prefix}_f1": float(result["f1"]),
+                f"{family_prefix}_cv_accuracy": float(result.get("cv_accuracy", result["accuracy"])),
+                f"{family_prefix}_cv_f1": float(result.get("cv_f1", result["f1"])),
+                f"{family_prefix}_probability_up": float(result["next_probability"]),
+                f"{family_prefix}_predicted_label": float(result["next_probability"] >= 0.5),
+                f"{family_prefix}_is_best": float(family == active_result["family"]),
+                f"{family_prefix}_rank": float(family_rank_map[family]),
+            }
+        )
+        if result.get("registry_version") is not None:
+            metrics[f"{family_prefix}_registry_version"] = float(result["registry_version"])
+        tags[f"{family_prefix}_model_name"] = result["candidate"].name
+        tags[f"{family_prefix}_source"] = result["source"]
+        tags[f"{family_prefix}_predicted_signal"] = result["next_signal"]
+
+    mlflow.log_metrics(metrics)
+    mlflow.set_tags(tags)
 
 
 def promote_champion(
@@ -1050,6 +1268,8 @@ def promote_champion(
                 f"{metric_prefix}_promotion_role": "champion_candidate",
                 f"{metric_prefix}_model_name": candidate.name,
                 f"{metric_prefix}_model_family": candidate.family,
+                f"{metric_prefix}_feature_preprocessor": FEATURE_PREPROCESSOR_NAME,
+                f"{metric_prefix}_features_normalized": "true",
                 f"{metric_prefix}_champion_alias": alias,
                 f"{metric_prefix}_validation_start": validation_start,
                 f"{metric_prefix}_validation_end": validation_end,
@@ -1094,6 +1314,18 @@ def promote_champion(
             version.version,
             "tournament_model_name",
             candidate.name,
+        )
+        client.set_model_version_tag(
+            registered_model_name,
+            version.version,
+            "feature_preprocessor",
+            FEATURE_PREPROCESSOR_NAME,
+        )
+        client.set_model_version_tag(
+            registered_model_name,
+            version.version,
+            "features_normalized",
+            "true",
         )
         client.set_registered_model_alias(
             registered_model_name,
@@ -1145,6 +1377,8 @@ def build_prediction_record(
         "best_champion_name": active_result["candidate"].name,
         "best_champion_family": active_result["family"],
         "best_champion_version": active_result.get("registry_version"),
+        "feature_preprocessor": FEATURE_PREPROCESSOR_NAME,
+        "features_normalized": True,
         "model_predictions": model_predictions,
         "reference_candle_timestamp": reference_timestamp.isoformat(),
         "target_candle_timestamp": target_timestamp.isoformat(),
@@ -1207,8 +1441,25 @@ def main() -> None:
     validation_end = valid_df["timestamp"].iloc[-1].isoformat()
 
     log_step("Train challenger zoo")
-    challengers = train_challengers(train_df, valid_df)
-    challenger_results = build_results(challengers, train_df, valid_df, future_row)
+    challengers, cv_summary = train_challengers(train_df, valid_df)
+    challenger_results = build_results(
+        challengers,
+        train_df,
+        valid_df,
+        future_row,
+        cv_summary=cv_summary,
+    )
+    full_labeled_df = pd.concat([train_df, valid_df], ignore_index=True)
+    refit_challengers = retrain_challengers_on_full_data(full_labeled_df)
+    refit_by_family = {candidate.family: candidate for candidate in refit_challengers}
+    full_prediction_frame = pd.concat([full_labeled_df, future_row], ignore_index=True)
+    for result in challenger_results:
+        refit_candidate = refit_by_family[result["family"]]
+        result["candidate"] = refit_candidate
+        result["next_probability"] = float(
+            predict_candidate_probabilities(refit_candidate, full_prediction_frame)[-1]
+        )
+        result["next_signal"] = prediction_to_signal(result["next_probability"])
 
     all_results = list(challenger_results)
     challenger_by_family = {result["family"]: result for result in challenger_results}
@@ -1282,6 +1533,7 @@ def main() -> None:
             {
                 "lookback_hours": LOOKBACK_HOURS,
                 "validation_hours": VALIDATION_HOURS,
+                "cross_validation_folds": CROSS_VALIDATION_FOLDS,
                 "sequence_length": SEQUENCE_LENGTH,
                 "rf_estimators": 400,
                 "xgb_estimators": 500,
@@ -1290,7 +1542,7 @@ def main() -> None:
                 "nn_epochs": 48,
             }
         )
-        promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
+        promotion_feature_rows = full_labeled_df
         for decision in family_decisions:
             challenger_result = decision["challenger"]
             champion_result = decision["champion"]
@@ -1362,6 +1614,10 @@ def main() -> None:
 
         log_step("Log tournament results to MLflow")
         log_challenger_summary(challenger_results)
+        log_comparison_metrics(
+            active_results_by_family=active_results_by_family,
+            active_result=active_result,
+        )
         mlflow.log_text(
             json.dumps(
                 [
