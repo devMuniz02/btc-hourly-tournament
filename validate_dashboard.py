@@ -45,7 +45,7 @@ HISTORY_COLUMNS = [
 
 def configure_tracking() -> tuple[MlflowClient, str, str]:
     registered_model_name = tournament.configure_tracking()
-    experiment_name = tournament.get_env_str("MLFLOW_EXPERIMENT") or tournament.DEFAULT_EXPERIMENT
+    experiment_name = tournament.build_experiment_name()
     return MlflowClient(), registered_model_name, experiment_name
 
 
@@ -61,6 +61,11 @@ def ensure_history_schema(history: pd.DataFrame) -> pd.DataFrame:
         if column not in updated.columns:
             updated[column] = "" if column.startswith("best_champion") or column == "model_predictions" else pd.NA
     return updated[HISTORY_COLUMNS]
+
+
+def build_history_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    frame = pd.DataFrame(rows, columns=HISTORY_COLUMNS)
+    return ensure_history_schema(frame)
 
 
 def parse_model_predictions(value: Any) -> dict[str, dict[str, Any]]:
@@ -213,11 +218,11 @@ def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFra
     updated = ensure_history_schema(history.copy())
     if not updated.empty:
         updated = updated[updated["timestamp"] != row["timestamp"]]
+    row_frame = build_history_frame([row])
     if updated.empty:
-        updated = ensure_history_schema(pd.DataFrame([row]))
+        updated = row_frame
     else:
-        updated.loc[len(updated)] = row
-        updated = ensure_history_schema(updated)
+        updated = pd.concat([updated, row_frame], ignore_index=True)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated
@@ -281,18 +286,11 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
     if not missing_rows:
         return updated
 
+    missing_frame = build_history_frame(missing_rows)
     if updated.empty:
-        updated = pd.DataFrame(
-            missing_rows,
-            columns=HISTORY_COLUMNS,
-        )
+        updated = missing_frame
     else:
-        updated = ensure_history_schema(updated)
-        next_index = len(updated)
-        for row in missing_rows:
-            for column in updated.columns:
-                updated.loc[next_index, column] = row.get(column, pd.NA)
-            next_index += 1
+        updated = pd.concat([ensure_history_schema(updated), missing_frame], ignore_index=True)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated
