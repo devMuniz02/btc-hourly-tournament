@@ -25,6 +25,22 @@ HISTORY_PATH = Path("history.csv")
 DASHBOARD_PATH = Path("assets/dashboard.png")
 LOCAL_LAST_PREDICTION_PATH = Path("last_prediction.json")
 EASTERN_TZ = ZoneInfo("America/New_York")
+HISTORY_COLUMNS = [
+    "timestamp",
+    "predicted",
+    "actual",
+    "result",
+    "failed",
+    "status",
+    "reference_open",
+    "reference_close",
+    "target_open",
+    "target_close",
+    "model_predictions",
+    "best_champion_name",
+    "best_champion_family",
+    "best_champion_version",
+]
 
 
 def configure_tracking() -> tuple[MlflowClient, str, str]:
@@ -52,6 +68,59 @@ def load_last_prediction() -> dict[str, Any] | None:
     if LOCAL_LAST_PREDICTION_PATH.exists():
         return json.loads(LOCAL_LAST_PREDICTION_PATH.read_text(encoding="utf-8"))
     return None
+
+
+def ensure_history_schema(history: pd.DataFrame) -> pd.DataFrame:
+    updated = history.copy()
+    for column in HISTORY_COLUMNS:
+        if column not in updated.columns:
+            updated[column] = "" if column.startswith("best_champion") or column == "model_predictions" else pd.NA
+    return updated[HISTORY_COLUMNS]
+
+
+def parse_model_predictions(value: Any) -> dict[str, dict[str, Any]]:
+    if isinstance(value, dict):
+        return value
+    if value is None or pd.isna(value):
+        return {}
+    text = str(value).strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def get_model_order(
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+) -> list[str]:
+    families: set[str] = set()
+    if prediction_record is not None:
+        families.update(parse_model_predictions(prediction_record.get("model_predictions")).keys())
+    if not history.empty and "model_predictions" in history.columns:
+        for value in history["model_predictions"]:
+            families.update(parse_model_predictions(value).keys())
+    return sorted(families)
+
+
+def get_model_display_name(
+    family: str,
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+) -> str:
+    if prediction_record is not None:
+        payload = parse_model_predictions(prediction_record.get("model_predictions")).get(family)
+        if payload and payload.get("name"):
+            return str(payload["name"])
+    if not history.empty and "model_predictions" in history.columns:
+        for value in history["model_predictions"]:
+            payload = parse_model_predictions(value).get(family)
+            if payload and payload.get("name"):
+                return str(payload["name"])
+    return family.upper()
 
 
 def compute_validation_lookback_hours(
@@ -114,44 +183,16 @@ def resolve_actual_direction(
 
 def load_history() -> pd.DataFrame:
     if not HISTORY_PATH.exists():
-        return pd.DataFrame(
-            columns=[
-                "timestamp",
-                "predicted",
-                "actual",
-                "result",
-                "failed",
-                "status",
-                "reference_open",
-                "reference_close",
-                "target_open",
-                "target_close",
-            ]
-        )
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
     history = pd.read_csv(HISTORY_PATH)
     if history.empty:
-        return pd.DataFrame(
-            columns=[
-                "timestamp",
-                "predicted",
-                "actual",
-                "result",
-                "failed",
-                "status",
-                "reference_open",
-                "reference_close",
-                "target_open",
-                "target_close",
-            ]
-        )
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
     history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True)
     if "failed" not in history.columns:
         history["failed"] = 0
     if "status" not in history.columns:
         history["status"] = "validated"
-    for column in ["reference_open", "reference_close", "target_open", "target_close"]:
-        if column not in history.columns:
-            history[column] = pd.NA
+    history = ensure_history_schema(history)
     return history
 
 
@@ -184,13 +225,14 @@ def prediction_already_recorded(history: pd.DataFrame, prediction_record: dict[s
 
 
 def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFrame:
-    updated = history.copy()
+    updated = ensure_history_schema(history.copy())
     if not updated.empty:
         updated = updated[updated["timestamp"] != row["timestamp"]]
     if updated.empty:
-        updated = pd.DataFrame([row])
+        updated = ensure_history_schema(pd.DataFrame([row]))
     else:
         updated.loc[len(updated)] = row
+        updated = ensure_history_schema(updated)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated
@@ -244,6 +286,10 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
                 "reference_close": pd.NA,
                 "target_open": pd.NA,
                 "target_close": pd.NA,
+                "model_predictions": "",
+                "best_champion_name": "",
+                "best_champion_family": "",
+                "best_champion_version": "",
             }
         )
 
@@ -253,20 +299,10 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
     if updated.empty:
         updated = pd.DataFrame(
             missing_rows,
-            columns=[
-                "timestamp",
-                "predicted",
-                "actual",
-                "result",
-                "failed",
-                "status",
-                "reference_open",
-                "reference_close",
-                "target_open",
-                "target_close",
-            ],
+            columns=HISTORY_COLUMNS,
         )
     else:
+        updated = ensure_history_schema(updated)
         next_index = len(updated)
         for row in missing_rows:
             for column in updated.columns:
@@ -425,362 +461,343 @@ def format_current_dual_time() -> str:
     )
 
 
+def compute_table_col_widths(
+    headers: list[str],
+    rows: list[list[Any]],
+    *,
+    min_width: float = 0.08,
+    max_width: float = 0.24,
+    header_weight: float = 1.0,
+) -> list[float]:
+    if not headers:
+        return []
+
+    weights: list[float] = []
+    for col_idx, header in enumerate(headers):
+        max_len = len(str(header)) * header_weight
+        for row in rows:
+            if col_idx >= len(row):
+                continue
+            value = str(row[col_idx])
+            line_len = max((len(line) for line in value.splitlines()), default=0)
+            max_len = max(max_len, line_len)
+        weights.append(max(max_len, 4))
+
+    total = float(sum(weights)) or 1.0
+    widths = [weight / total for weight in weights]
+    widths = [min(max(width, min_width), max_width) for width in widths]
+    normalized_total = sum(widths) or 1.0
+    return [width / normalized_total for width in widths]
+
+
 def render_dashboard(
     history: pd.DataFrame,
     stats: dict[str, int],
     prediction_record: dict[str, Any] | None,
 ) -> None:
-    fig = plt.figure(figsize=(15, 8), facecolor="#f4efe6")
-    grid = fig.add_gridspec(
-        2,
-        2,
-        width_ratios=[2.0, 1],
-        height_ratios=[1.0, 1.9],
-        hspace=0.42,
-        wspace=0.18,
-    )
+    history = ensure_history_schema(history)
+    model_families = get_model_order(history, prediction_record)
+    model_headers = {
+        family: get_model_display_name(family, history, prediction_record)
+        for family in model_families
+    }
+    color_cycle = ["#1f3c4d", "#c44536", "#1b7f4a", "#946846", "#6b5b95", "#d17a22"]
+
+    def to_arrow(value: Any) -> str:
+        if value == "" or pd.isna(value):
+            return "--"
+        if isinstance(value, str):
+            if value.upper() == "FAILED":
+                return "FAILED"
+            try:
+                value = int(float(value))
+            except ValueError:
+                return value
+        return "^ UP" if int(value) == 1 else "v DOWN"
+
+    def to_result(row: pd.Series) -> str:
+        if int(pd.to_numeric(row.get("failed", 0), errors="coerce") or 0) == 1:
+            return "FAILED"
+        result_value = row.get("result")
+        if pd.isna(result_value) or str(result_value).strip() == "":
+            return "--"
+        return "OK" if int(float(result_value)) == 1 else "MISS"
+
+    fig = plt.figure(figsize=(19, 10), facecolor="#f4efe6")
+    grid = fig.add_gridspec(2, 2, width_ratios=[2.6, 1.2], height_ratios=[1.05, 1.55], hspace=0.36, wspace=0.16)
     ax_trend = fig.add_subplot(grid[0, 0])
     ax_chart = fig.add_subplot(grid[1, 0])
-    right_grid = grid[:, 1].subgridspec(2, 1, height_ratios=[0.8, 1.2], hspace=0.2)
+    right_grid = grid[:, 1].subgridspec(2, 1, height_ratios=[1.05, 0.95], hspace=0.22)
     ax_next = fig.add_subplot(right_grid[0, 0])
     ax_table = fig.add_subplot(right_grid[1, 0])
-    fig.patch.set_facecolor("#f4efe6")
-    ax_trend.set_facecolor("#fbf8f2")
-    ax_chart.set_facecolor("#fbf8f2")
-    ax_next.set_facecolor("#fbf8f2")
-    ax_table.set_facecolor("#fbf8f2")
+    for axis in [ax_trend, ax_chart, ax_next, ax_table]:
+        axis.set_facecolor("#fbf8f2")
 
-    ax_trend.set_title("Recent Accuracy Trend", fontsize=15, weight="bold", pad=12)
-    if history.empty:
-        ax_trend.text(
-            0.5,
-            0.5,
-            "No validation history yet",
-            ha="center",
-            va="center",
-            fontsize=12,
-            color="#6c757d",
-            transform=ax_trend.transAxes,
-        )
+    ax_trend.set_title("Per-Model Accuracy Across Time", fontsize=15, weight="bold", pad=12)
+    scored = history.sort_values("timestamp").copy()
+    scored = scored[
+        (pd.to_numeric(scored["failed"], errors="coerce").fillna(0) == 0)
+        & (scored["status"] != "missing")
+        & (pd.to_numeric(scored["actual"], errors="coerce").notna())
+    ].copy()
+    plotted = False
+    for index, family in enumerate(model_families):
+        correct = 0
+        total = 0
+        xs: list[pd.Timestamp] = []
+        ys: list[float] = []
+        for _, row in scored.iterrows():
+            model_payload = parse_model_predictions(row.get("model_predictions")).get(family, {})
+            predicted_label = model_payload.get("predicted_label")
+            actual_label = pd.to_numeric(row.get("actual"), errors="coerce")
+            if predicted_label is None or pd.isna(actual_label):
+                continue
+            total += 1
+            correct += int(int(predicted_label) == int(actual_label))
+            xs.append(pd.Timestamp(row["timestamp"]))
+            ys.append((correct / total) * 100)
+        if not xs:
+            continue
+        plotted = True
+        color = color_cycle[index % len(color_cycle)]
+        ax_trend.plot(xs, ys, linewidth=2.2, marker="o", markersize=3.8, color=color, label=model_headers[family])
+
+    if not plotted:
+        ax_trend.text(0.5, 0.5, "No validated per-model history yet", ha="center", va="center", fontsize=12, color="#6c757d", transform=ax_trend.transAxes)
         ax_trend.set_xticks([])
         ax_trend.set_yticks([])
         for spine in ax_trend.spines.values():
             spine.set_visible(False)
     else:
-        trend_history = history.sort_values("timestamp").tail(20).copy()
-        scored = trend_history[
-            (pd.to_numeric(trend_history["failed"], errors="coerce").fillna(0) == 0)
-            & (trend_history["status"] != "missing")
-            & (trend_history["predicted"].fillna("").astype(str).str.strip() != "")
-        ].copy()
-        scored["result"] = pd.to_numeric(scored["result"], errors="coerce")
-        scored = scored[scored["result"].notna()].copy()
-        if scored.empty:
-            ax_trend.text(
-                0.5,
-                0.5,
-                "Only failed runs in recent history",
-                ha="center",
-                va="center",
-                fontsize=12,
-                color="#6c757d",
-                transform=ax_trend.transAxes,
+        ax_trend.axhline(50, color="#c9bba7", linestyle="--", linewidth=1.0)
+        ax_trend.set_ylim(0, 110)
+        ax_trend.set_ylabel("Accuracy %")
+        ax_trend.tick_params(axis="x", rotation=25, labelsize=8)
+        ax_trend.tick_params(axis="y", labelsize=9)
+        ax_trend.grid(axis="y", alpha=0.18)
+        for spine in ax_trend.spines.values():
+            spine.set_color("#d8cbb8")
+        champion_history = scored[scored["best_champion_name"].fillna("").astype(str).str.strip() != ""].copy()
+        if not champion_history.empty:
+            champion_history["champion_key"] = (
+                champion_history["best_champion_family"].fillna("").astype(str)
+                + ":"
+                + champion_history["best_champion_name"].fillna("").astype(str)
             )
-            ax_trend.set_xticks([])
-            ax_trend.set_yticks([])
-            for spine in ax_trend.spines.values():
-                spine.set_visible(False)
-        else:
-            scored["running_accuracy"] = (
-                scored["result"].cumsum() / pd.Series(range(1, len(scored) + 1), index=scored.index)
-            ) * 100
-            x_labels = [
-                pd.Timestamp(ts).strftime("%m-%d %H:%M") for ts in scored["timestamp"]
-            ]
-            point_colors = [
-                "#1b7f4a" if int(result) == 1 else "#c44536"
-                for result in scored["result"]
-            ]
-            ax_trend.plot(
-                x_labels,
-                scored["running_accuracy"],
-                color="#1f3c4d",
-                linewidth=2.5,
-                marker="o",
-                markersize=0,
-                zorder=2,
-            )
-            ax_trend.scatter(
-                x_labels,
-                scored["running_accuracy"],
-                c=point_colors,
-                s=55,
-                edgecolors="#fbf8f2",
-                linewidths=1.0,
-                zorder=3,
-            )
-            ax_trend.axhline(50, color="#c9bba7", linestyle="--", linewidth=1.2)
-            ax_trend.set_ylim(-10, 110)
-            ax_trend.set_yticks([0, 20, 40, 60, 80, 100])
-            ax_trend.set_ylabel("Accuracy %")
-            ax_trend.tick_params(axis="x", rotation=25, labelsize=8, pad=4)
-            ax_trend.tick_params(axis="y", labelsize=9)
-            ax_trend.grid(axis="y", alpha=0.18)
-            for spine in ax_trend.spines.values():
-                spine.set_color("#d8cbb8")
+            changes = champion_history[champion_history["champion_key"] != champion_history["champion_key"].shift(1)]
+            for idx, (_, row) in enumerate(changes.iterrows()):
+                ts = pd.Timestamp(row["timestamp"])
+                ax_trend.axvline(ts, color="#b08b57", linestyle=":", linewidth=1.0, alpha=0.55)
+                ax_trend.text(ts, 106 - ((idx % 3) * 6), str(row["best_champion_name"]), rotation=90, va="top", ha="right", fontsize=7, color="#7a5c2e")
+        ax_trend.legend(loc="lower right", fontsize=8, frameon=False, ncol=2)
 
     ax_chart.axis("off")
-    ax_chart.set_title("10 Most Recent Predictions", fontsize=15, weight="bold", pad=18)
-
-    if history.empty:
+    ax_chart.set_title("Last 10 Predictions and Best Champion", fontsize=15, weight="bold", pad=18)
+    recent_history = history.sort_values("timestamp", ascending=False).head(10).copy()
+    if recent_history.empty:
         recent_rows = [["--", "--", "--", "--", "--", "--"]]
+        recent_headers = ["Open Time", "Open Price", "Close Price", "Champion", "Actual", "Result"]
     else:
-        current_hour_start = pd.Timestamp.now(tz="UTC").floor("h")
-        latest_open_time = current_hour_start - pd.Timedelta(hours=1)
-        recent_history = history[
-            history["timestamp"] <= latest_open_time + pd.Timedelta(hours=1)
-        ].sort_values("timestamp", ascending=False).head(10).copy()
-
-        def to_arrow(value: Any) -> str:
-            if value == "" or pd.isna(value):
-                return "--"
-            if isinstance(value, str):
-                if value.upper() == "FAILED":
-                    return "FAILED"
-                try:
-                    value = int(value)
-                except ValueError:
-                    return value
-            return "▲ UP" if int(value) == 1 else "▼ DOWN"
-
-        def to_result(row: pd.Series) -> str:
-            if int(row["failed"]) == 1:
-                return "FAILED"
-            result_value = row["result"]
-            if pd.isna(result_value) or str(result_value).strip() == "":
-                return "--"
-            return "OK" if int(row["result"]) == 1 else "MISS"
-
-        recent_rows = [
-            [
+        recent_rows = []
+        recent_headers = ["Open Time", "Open Price", "Close Price", *[model_headers[family] for family in model_families], "Champion", "Actual", "Result"]
+        for _, row in recent_history.iterrows():
+            model_payloads = parse_model_predictions(row.get("model_predictions"))
+            row_values = [
                 format_dual_time(pd.Timestamp(row["timestamp"]) - pd.Timedelta(hours=1)),
-                (
-                    f"{float(row['reference_open']):,.2f}"
-                    if pd.notna(row["reference_open"])
-                    else "--"
-                ),
-                (
-                    f"{float(row['reference_close']):,.2f}"
-                    if pd.notna(row["reference_close"])
-                    else "--"
-                ),
-                to_arrow(row["predicted"]),
-                to_arrow(row["actual"]),
-                to_result(row),
+                f"{float(row['reference_open']):,.2f}" if pd.notna(row["reference_open"]) else "--",
+                f"{float(row['reference_close']):,.2f}" if pd.notna(row["reference_close"]) else "--",
             ]
-            for _, row in recent_history.iterrows()
-        ]
+            for family in model_families:
+                row_values.append(to_arrow(model_payloads.get(family, {}).get("predicted_label", "")))
+            row_values.extend([row.get("best_champion_name") or "--", to_arrow(row.get("actual")), to_result(row)])
+            recent_rows.append(row_values)
 
+    recent_col_widths = compute_table_col_widths(
+        recent_headers,
+        recent_rows,
+        min_width=0.075,
+        max_width=0.17,
+    )
     recent_table = ax_chart.table(
         cellText=recent_rows,
-        colLabels=["Open Time", "Open Price", "Close Price", "Pred", "Actual", "Result"],
+        colLabels=recent_headers,
         loc="center",
         cellLoc="center",
         colLoc="center",
+        colWidths=recent_col_widths,
     )
-    recent_table.scale(1, 2)
+    recent_table.scale(1, 2.0)
     recent_table.auto_set_font_size(False)
-    recent_table.set_fontsize(10.5)
-
+    recent_table.set_fontsize(8.6 if len(recent_headers) > 8 else 9.6)
+    model_col_start = 3
+    model_col_end = model_col_start + len(model_families) - 1
+    champion_col_idx = len(recent_headers) - 3
+    actual_col_idx = len(recent_headers) - 2
+    result_col_idx = len(recent_headers) - 1
     for (row_idx, col_idx), cell in recent_table.get_celld().items():
         cell.set_edgecolor("#d8cbb8")
         if row_idx == 0:
             cell.set_facecolor("#1f3c4d")
-            cell.set_text_props(color="white", weight="bold")
+            cell.set_text_props(color="white", weight="bold", ha="center", va="center")
             continue
-
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
-        text_value = cell.get_text().get_text()
-        normalized_text_value = (
-            text_value.replace("â–²", "▲").replace("â–¼", "▼")
-        )
-        if normalized_text_value != text_value:
-            cell.get_text().set_text(normalized_text_value)
-            text_value = normalized_text_value
-
-        if col_idx in {3, 4}:
+        cell.set_text_props(ha="center", va="center")
+        text_value = str(cell.get_text().get_text())
+        if model_col_start <= col_idx <= model_col_end or col_idx == actual_col_idx:
             if "UP" in text_value:
-                cell.set_text_props(color="#1b7f4a", weight="bold")
+                cell.set_text_props(color="#1b7f4a", weight="bold", ha="center", va="center")
             elif "DOWN" in text_value:
-                cell.set_text_props(color="#c44536", weight="bold")
+                cell.set_text_props(color="#c44536", weight="bold", ha="center", va="center")
             elif "FAILED" in text_value:
-                cell.set_text_props(color="#6c757d", weight="bold")
-
-        if col_idx == 5:
+                cell.set_text_props(color="#6c757d", weight="bold", ha="center", va="center")
+        if col_idx == champion_col_idx:
+            cell.set_text_props(color="#7a5c2e", weight="bold", ha="center", va="center")
+        if col_idx == result_col_idx:
             if text_value == "OK":
                 cell.set_facecolor("#d9f2e3")
-                cell.set_text_props(color="#1b7f4a", weight="bold")
+                cell.set_text_props(color="#1b7f4a", weight="bold", ha="center", va="center")
             elif text_value == "MISS":
                 cell.set_facecolor("#f8d7da")
-                cell.set_text_props(color="#a12d2f", weight="bold")
+                cell.set_text_props(color="#a12d2f", weight="bold", ha="center", va="center")
             elif text_value == "FAILED":
                 cell.set_facecolor("#e9ecef")
-                cell.set_text_props(color="#495057", weight="bold")
+                cell.set_text_props(color="#495057", weight="bold", ha="center", va="center")
 
     ax_next.axis("off")
-
+    ax_next.set_title("Next Prediction by Model (* = best overall)", fontsize=14, weight="bold", pad=6, color="#000000")
+    next_payloads = parse_model_predictions(None if prediction_record is None else prediction_record.get("model_predictions"))
+    current_best_family = None if prediction_record is None else prediction_record.get("best_champion_family")
+    next_headers = ["Field", *[f"{model_headers[family]}{' *' if family == current_best_family else ''}" for family in model_families]]
+    if not model_families:
+        next_headers = ["Field", "Value"]
     if not prediction_record:
-        next_rows = [
-            ["Open Time", "--"],
-            ["Target Time", "--"],
-            ["Open Price", "--"],
-            ["Signal", "--"],
-            ["Probability", "--"],
-            ["Model", "--"],
-            ["Accuracy", "--"],
-            ["F1", "--"],
-        ]
-        signal_color = "#6c757d"
+        next_rows = [["Open Time", "--"], ["Target Time", "--"], ["Signal", "--"], ["Probability", "--"], ["Accuracy", "--"], ["F1", "--"], ["Best Overall", "--"]]
     else:
-        signal = prediction_record.get("predicted_signal", "--")
-        signal_color = "#1b7f4a" if signal == "UP" else "#c44536"
-        if prediction_record.get("status") == "failed":
-            signal = "FAILED"
-            signal_color = "#6c757d"
-        open_time = prediction_record.get("reference_candle_timestamp", "--")
-        target_time = prediction_record.get("target_candle_timestamp", "--")
-        if open_time != "--":
-            open_time = format_dual_time(open_time)
-        if target_time != "--":
-            target_time = format_dual_time(target_time)
-        open_price = float(
-            prediction_record.get(
-                "price_to_beat",
-                prediction_record.get("reference_open", 0.0),
-            )
-        )
-        next_rows = [
-            ["Open Time", open_time],
-            ["Target Time", target_time],
-            ["Open Price", f"{open_price:,.2f}"],
-            ["Signal", signal],
-            ["Probability", f"{float(prediction_record.get('probability_up', 0.0)):.1%}"],
-            ["Model", prediction_record.get("model_name", "--")],
-            ["Accuracy", f"{float(prediction_record.get('model_accuracy', 0.0)):.3f}"],
-            ["F1", f"{float(prediction_record.get('model_f1', 0.0)):.3f}"],
-        ]
+        open_time = format_dual_time(prediction_record.get("reference_candle_timestamp"))
+        target_time = format_dual_time(prediction_record.get("target_candle_timestamp"))
+        next_rows = [["Open Time"], ["Target Time"], ["Signal"], ["Probability"], ["Accuracy"], ["F1"], ["Best Overall"]]
+        for family in model_families:
+            payload = next_payloads.get(family, {})
+            next_rows[0].append("")
+            next_rows[1].append("")
+            next_rows[2].append(payload.get("predicted_signal", "--"))
+            next_rows[3].append(f"{float(payload.get('probability_up', 0.0)):.1%}" if payload else "--")
+            next_rows[4].append(f"{float(payload.get('accuracy', 0.0)):.3f}" if payload else "--")
+            next_rows[5].append(f"{float(payload.get('f1', 0.0)):.3f}" if payload else "--")
+            next_rows[6].append("BEST" if family == current_best_family else "")
+        if not model_families:
+            next_rows = [["Open Time", open_time], ["Target Time", target_time], ["Signal", prediction_record.get("predicted_signal", "--")], ["Probability", f"{float(prediction_record.get('probability_up', 0.0)):.1%}"], ["Accuracy", f"{float(prediction_record.get('model_accuracy', 0.0)):.3f}"], ["F1", f"{float(prediction_record.get('model_f1', 0.0)):.3f}"], ["Best Overall", prediction_record.get("best_champion_name", "--")]]
 
+    next_col_widths = compute_table_col_widths(
+        next_headers,
+        next_rows,
+        min_width=0.11 if len(next_headers) > 4 else 0.16,
+        max_width=0.26,
+        header_weight=1.3,
+    )
     next_table = ax_next.table(
         cellText=next_rows,
-        colLabels=["Field", "Value"],
-        bbox=[0, 0.0, 1, 0.88],
-        cellLoc="left",
-        colLoc="left",
+        colLabels=next_headers,
+        bbox=[-0.02, 0.0, 1.06, 0.9],
+        cellLoc="center",
+        colLoc="center",
+        colWidths=next_col_widths,
     )
-    next_table.scale(1, 2.15)
+    next_table.scale(1, 1.95)
     next_table.auto_set_font_size(False)
-    next_table.set_fontsize(9.25)
-
+    next_table.set_fontsize(7.9 if len(next_headers) > 4 else 9.1)
     for (row_idx, col_idx), cell in next_table.get_celld().items():
         cell.set_edgecolor("#d8cbb8")
         if row_idx == 0:
             cell.set_facecolor("#1f3c4d")
-            cell.set_text_props(color="white", weight="bold")
+            cell.set_text_props(color="white", weight="bold", ha="center", va="center")
             continue
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
-        if row_idx in {1, 2}:
-            cell.set_height(cell.get_height() * 1.55)
-            cell.get_text().set_linespacing(1.3)
-        if col_idx == 1:
-            value_text = str(cell.get_text().get_text())
-            if row_idx == 4:
-                cell.set_facecolor("#e9f5ec" if signal_color == "#1b7f4a" else "#f8d7da")
-                cell.set_text_props(color=signal_color, weight="bold")
-            elif row_idx == 5:
-                cell.set_text_props(color="#1f3c4d", weight="bold")
-            elif value_text.endswith("%"):
-                cell.set_text_props(color=signal_color, weight="bold")
+        cell.set_text_props(ha="center", va="center")
+        text_value = str(cell.get_text().get_text())
+        if row_idx in {1, 2} and len(next_headers) > 2:
+            if col_idx == 1:
+                cell.visible_edges = "LTB"
+                cell.set_text_props(color="#1f3c4d", weight="bold", ha="center", va="center")
+            elif col_idx == len(next_headers) - 1:
+                cell.visible_edges = "RTB"
+                cell.get_text().set_text("")
+            elif col_idx > 1:
+                cell.visible_edges = "TB"
+                cell.get_text().set_text("")
+        if row_idx == 3 and col_idx > 0:
+            if "UP" in text_value:
+                cell.set_facecolor("#e9f5ec")
+                cell.set_text_props(color="#1b7f4a", weight="bold", ha="center", va="center")
+            elif "DOWN" in text_value:
+                cell.set_facecolor("#f8d7da")
+                cell.set_text_props(color="#c44536", weight="bold", ha="center", va="center")
+        if row_idx == 7 and text_value == "BEST":
+            cell.set_facecolor("#f6eee1")
+            cell.set_text_props(color="#7a5c2e", weight="bold", ha="center", va="center")
+
+    if prediction_record and len(next_headers) > 2:
+        fig.canvas.draw()
+        merged_start_col = 1
+        merged_end_col = len(next_headers) - 1
+        merged_time_rows = [
+            (1, open_time),
+            (2, target_time),
+        ]
+        for table_row_idx, label in merged_time_rows:
+            start_cell = next_table[(table_row_idx, merged_start_col)]
+            end_cell = next_table[(table_row_idx, merged_end_col)]
+            x0, y0 = start_cell.get_xy()
+            x1 = end_cell.get_xy()[0] + end_cell.get_width()
+            y_center = y0 + (start_cell.get_height() / 2.0)
+            x_center = (x0 + x1) / 2.0
+            ax_next.text(
+                x_center,
+                y_center,
+                label,
+                ha="center",
+                va="center",
+                fontsize=8.8 if len(next_headers) > 4 else 9.6,
+                color="#1f3c4d",
+                weight="bold",
+                transform=ax_next.transAxes,
+                zorder=10,
+            )
 
     ax_table.axis("off")
-    table_rows = [
+    ax_table.set_title("Champion Summary", fontsize=14, weight="bold", pad=6, color="#000000")
+    summary_rows = [
+        ["Current Best Champion", prediction_record.get("best_champion_name", "--") if prediction_record else "--"],
+        ["Best Champion Family", prediction_record.get("best_champion_family", "--") if prediction_record else "--"],
+        ["Best Champion Version", prediction_record.get("best_champion_version", "--") if prediction_record else "--"],
         ["Total Predictions", stats["total_predictions"]],
         ["Total Correct", stats["total_correct"]],
         ["Total Accuracy %", f"{stats['total_accuracy_pct']:.1f}%"],
-        ["Total Failed", stats["total_failed"]],
         ["Last 24h Predictions", stats["last_24h_predictions"]],
-        ["Last 24h Correct", stats["last_24h_correct"]],
         ["Last 24h Accuracy %", f"{stats['last_24h_accuracy_pct']:.1f}%"],
-        ["Last 24h Failed", stats["last_24h_failed"]],
     ]
-    table = ax_table.table(
-        cellText=table_rows,
-        colLabels=["Metric", "Value"],
-        bbox=[0, 0.0, 1, 0.92],
-        cellLoc="left",
-        colLoc="left",
-    )
-    table.scale(1, 2)
+    table = ax_table.table(cellText=summary_rows, colLabels=["Metric", "Value"], bbox=[0, 0.02, 1, 0.9], cellLoc="center", colLoc="center")
+    table.scale(1, 1.95)
     table.auto_set_font_size(False)
-    table.set_fontsize(11)
-
+    table.set_fontsize(10.0)
     for (row_idx, col_idx), cell in table.get_celld().items():
         cell.set_edgecolor("#d8cbb8")
         if row_idx == 0:
             cell.set_facecolor("#1f3c4d")
-            cell.set_text_props(color="white", weight="bold")
+            cell.set_text_props(color="white", weight="bold", ha="center", va="center")
             continue
         cell.set_facecolor("#fffaf3" if row_idx % 2 else "#f6eee1")
-        if col_idx == 1:
-            value_text = str(cell.get_text().get_text())
-            if "%" in value_text:
-                pct = float(value_text.replace("%", ""))
-                color = "#1b7f4a" if pct >= 50 else "#c44536"
-                cell.set_text_props(color=color, weight="bold")
+        cell.set_text_props(ha="center", va="center")
+        if row_idx in {1, 2, 3} and col_idx == 1:
+            cell.set_text_props(color="#7a5c2e", weight="bold", ha="center", va="center")
+        if col_idx == 1 and "%" in str(cell.get_text().get_text()):
+            pct = float(str(cell.get_text().get_text()).replace("%", ""))
+            cell.set_text_props(color="#1b7f4a" if pct >= 50 else "#c44536", weight="bold", ha="center", va="center")
 
-    fig.suptitle(
-        "BTC Directional Bot Validation Dashboard",
-        fontsize=18,
-        weight="bold",
-        color="#1f3c4d",
-        y=0.98,
-    )
-    fig.text(
-        0.5,
-        0.945,
-        format_current_dual_time(),
-        ha="center",
-        va="center",
-        fontsize=10.5,
-        color="#5b5f66",
-    )
-    fig.text(
-        0.80,
-        0.935,
-        "Next Prediction",
-        ha="center",
-        va="bottom",
-        fontsize=15,
-        weight="bold",
-        color="#000000",
-    )
-    fig.text(
-        0.80,
-        0.505,
-        "Bot Stats",
-        ha="center",
-        va="bottom",
-        fontsize=15,
-        weight="bold",
-        color="#000000",
-    )
-    fig.text(
-        0.015,
-        0.02,
-        "Green = UP / correct strength   Red = DOWN / misses   Gray = failed run",
-        fontsize=10,
-        color="#5b5f66",
-    )
-    fig.subplots_adjust(left=0.05, right=0.98, top=0.86, bottom=0.12)
+    fig.suptitle("BTC Directional Bot Validation Dashboard", fontsize=18, weight="bold", color="#1f3c4d", y=0.98)
+    fig.text(0.5, 0.945, format_current_dual_time(), ha="center", va="center", fontsize=10.5, color="#5b5f66")
+    fig.text(0.015, 0.02, "Green = UP / correct strength   Red = DOWN / misses   Gray = failed run", fontsize=10, color="#5b5f66")
+    fig.subplots_adjust(left=0.04, right=0.985, top=0.88, bottom=0.08)
     DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
     plt.close(fig)
@@ -840,6 +857,13 @@ def main() -> None:
                 "reference_close": prediction_record.get("reference_close"),
                 "target_open": pd.NA,
                 "target_close": pd.NA,
+                "model_predictions": json.dumps(
+                    parse_model_predictions(prediction_record.get("model_predictions")),
+                    sort_keys=True,
+                ),
+                "best_champion_name": prediction_record.get("best_champion_name", ""),
+                "best_champion_family": prediction_record.get("best_champion_family", ""),
+                "best_champion_version": prediction_record.get("best_champion_version", ""),
             },
         )
         stats = compute_stats(history)
@@ -885,6 +909,13 @@ def main() -> None:
             "reference_close": reference_close,
             "target_open": target_open,
             "target_close": pd.NA,
+            "model_predictions": json.dumps(
+                parse_model_predictions(prediction_record.get("model_predictions")),
+                sort_keys=True,
+            ),
+            "best_champion_name": prediction_record.get("best_champion_name", ""),
+            "best_champion_family": prediction_record.get("best_champion_family", ""),
+            "best_champion_version": prediction_record.get("best_champion_version", ""),
         },
     )
     stats = compute_stats(history)

@@ -47,6 +47,7 @@ DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
 MODEL_ARTIFACT_NAME = "model"
 LAST_PREDICTION_PATH = Path("last_prediction.json")
+CHAMPION_ALIAS = "champion"
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
     ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
@@ -556,6 +557,30 @@ def ranking_key(result: dict[str, Any]) -> tuple[float, float]:
     return (-result["f1"], -result["accuracy"])
 
 
+def champion_alias_for_family(family: str) -> str:
+    return f"{CHAMPION_ALIAS}-{family}"
+
+
+def serialize_result(
+    result: dict[str, Any],
+    *,
+    include_registry_version: bool = True,
+) -> dict[str, Any]:
+    payload = {
+        "name": result["candidate"].name,
+        "family": result["family"],
+        "source": result["source"],
+        "accuracy": float(result["accuracy"]),
+        "f1": float(result["f1"]),
+        "probability_up": float(result["next_probability"]),
+        "predicted_signal": result["next_signal"],
+        "predicted_label": int(result["next_probability"] >= 0.5),
+    }
+    if include_registry_version:
+        payload["registry_version"] = result.get("registry_version")
+    return payload
+
+
 def predict_candidate_probabilities(
     candidate: TournamentCandidate,
     feature_rows: pd.DataFrame,
@@ -745,6 +770,7 @@ def build_results(
         results.append(
             {
                 "name": candidate.name,
+                "family": candidate.family,
                 "source": "challenger",
                 "candidate": candidate,
                 "accuracy": metrics["accuracy"],
@@ -919,10 +945,11 @@ def build_model_pip_requirements() -> list[str]:
 def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
+    alias: str = CHAMPION_ALIAS,
 ) -> tuple[TournamentCandidate | None, dict[str, str] | None]:
-    log_step("Load current champion from MLflow")
+    log_step(f"Load current champion from MLflow ({alias})")
     try:
-        version = client.get_model_version_by_alias(registered_model_name, "champion")
+        version = client.get_model_version_by_alias(registered_model_name, alias)
     except Exception:
         return None, None
 
@@ -961,6 +988,7 @@ def evaluate_champion(
     next_probability = float(predict_candidate_probabilities(champion, prediction_frame)[-1])
     return {
         "name": champion.name,
+        "family": champion.family,
         "source": "champion",
         "candidate": champion,
         "accuracy": metrics["accuracy"],
@@ -986,6 +1014,7 @@ def log_challenger_summary(
         summary.append(
             {
                 "name": result["name"],
+                "family": result["family"],
                 "accuracy": result["accuracy"],
                 "f1": result["f1"],
                 "next_probability": result["next_probability"],
@@ -1002,8 +1031,9 @@ def promote_champion(
     validation_start: str,
     validation_end: str,
     feature_rows: pd.DataFrame,
+    alias: str,
 ) -> str:
-    log_step(f"Promote new champion: {winner['candidate'].name}")
+    log_step(f"Promote new champion: {winner['candidate'].name} ({alias})")
     candidate: TournamentCandidate = winner["candidate"]
     with tempfile.TemporaryDirectory() as temp_dir:
         package_dir = Path(temp_dir) / ARTIFACT_SUBDIR
@@ -1016,6 +1046,8 @@ def promote_champion(
                 {
                     "role": "champion_candidate",
                     "model_name": candidate.name,
+                    "model_family": candidate.family,
+                    "champion_alias": alias,
                     "validation_start": validation_start,
                     "validation_end": validation_end,
                 }
@@ -1045,8 +1077,8 @@ def promote_champion(
             client.set_model_version_tag(
                 registered_model_name,
                 version.version,
-                "champion",
-                "true",
+                "champion_alias",
+                alias,
             )
             client.set_model_version_tag(
                 registered_model_name,
@@ -1056,7 +1088,7 @@ def promote_champion(
             )
             client.set_registered_model_alias(
                 registered_model_name,
-                "champion",
+                alias,
                 version.version,
             )
             return version.version
@@ -1076,21 +1108,34 @@ def print_scoreboard(results: list[dict[str, Any]]) -> None:
 
 def build_prediction_record(
     active_result: dict[str, Any],
+    active_results_by_family: dict[str, dict[str, Any]],
     future_row: pd.DataFrame,
     registered_model_name: str,
 ) -> dict[str, Any]:
     reference_timestamp = pd.Timestamp(future_row["timestamp"].iloc[0])
     target_timestamp = reference_timestamp + pd.Timedelta(hours=1)
+    model_predictions = {
+        family: {
+            **serialize_result(result),
+            "is_current_best": family == active_result["family"],
+        }
+        for family, result in sorted(active_results_by_family.items())
+    }
     return {
         "status": "success",
         "generated_at": pd.Timestamp.utcnow().isoformat(),
         "registered_model_name": registered_model_name,
         "model_name": active_result["candidate"].name,
+        "model_family": active_result["family"],
         "model_accuracy": float(active_result["accuracy"]),
         "model_f1": float(active_result["f1"]),
         "probability_up": float(active_result["next_probability"]),
         "predicted_signal": active_result["next_signal"],
         "predicted_label": int(active_result["next_probability"] >= 0.5),
+        "best_champion_name": active_result["candidate"].name,
+        "best_champion_family": active_result["family"],
+        "best_champion_version": active_result.get("registry_version"),
+        "model_predictions": model_predictions,
         "reference_candle_timestamp": reference_timestamp.isoformat(),
         "target_candle_timestamp": target_timestamp.isoformat(),
         "reference_open": float(future_row["open"].iloc[0]),
@@ -1156,38 +1201,123 @@ def main() -> None:
     challenger_results = build_results(challengers, train_df, valid_df, future_row)
 
     all_results = list(challenger_results)
-    champion_result: dict[str, Any] | None = None
+    challenger_by_family = {result["family"]: result for result in challenger_results}
+    family_decisions: list[dict[str, Any]] = []
+    active_results_by_family: dict[str, dict[str, Any]] = {}
+
     if args.reset_champion_from_challenger:
         print("Champion comparison disabled. Selecting from the current challenger leaderboard only.")
-    else:
-        champion_candidate, champion_meta = get_current_champion(client, registered_model_name)
-        if champion_candidate is not None and champion_meta is not None:
-            champion_result = evaluate_champion(
-                champion_candidate,
-                train_df,
-                valid_df,
-                future_row,
+
+    for family, challenger_result in sorted(challenger_by_family.items()):
+        champion_result: dict[str, Any] | None = None
+        champion_meta: dict[str, str] | None = None
+        family_alias = champion_alias_for_family(family)
+        if not args.reset_champion_from_challenger:
+            champion_candidate, champion_meta = get_current_champion(
+                client,
+                registered_model_name,
+                alias=family_alias,
             )
-            champion_result["name"] = f"{champion_result['name']} (champion)"
-            champion_result["registry_version"] = champion_meta["version"]
-            all_results.append(champion_result)
+            if champion_candidate is not None and champion_meta is not None:
+                champion_result = evaluate_champion(
+                    champion_candidate,
+                    train_df,
+                    valid_df,
+                    future_row,
+                )
+                champion_result["registry_version"] = champion_meta["version"]
+                all_results.append(champion_result)
 
-    best_challenger = sorted(challenger_results, key=ranking_key)[0]
-    null_model_block = (
-        best_challenger["f1"] <= 0.5 or best_challenger["accuracy"] <= 0.5
-    )
-
-    if champion_result is None:
-        should_promote = not null_model_block
-        active_result = best_challenger
-    else:
-        should_promote = (
-            best_challenger["f1"] > champion_result["f1"] and not null_model_block
+        null_model_block = (
+            challenger_result["f1"] <= 0.5 or challenger_result["accuracy"] <= 0.5
         )
-        active_result = best_challenger if should_promote else champion_result
+        if champion_result is None:
+            should_promote = not null_model_block
+            active_family_result = challenger_result
+        else:
+            should_promote = (
+                challenger_result["f1"] > champion_result["f1"] and not null_model_block
+            )
+            active_family_result = challenger_result if should_promote else champion_result
+
+        active_results_by_family[family] = active_family_result
+        family_decisions.append(
+            {
+                "family": family,
+                "alias": family_alias,
+                "challenger": challenger_result,
+                "champion": champion_result,
+                "champion_meta": champion_meta,
+                "should_promote": should_promote,
+                "null_model_block": null_model_block,
+                "active_result": active_family_result,
+            }
+        )
+
+    active_result = sorted(active_results_by_family.values(), key=ranking_key)[0]
+
+    print_scoreboard(all_results)
+    promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
+    for decision in family_decisions:
+        challenger_result = decision["challenger"]
+        champion_result = decision["champion"]
+        if decision["null_model_block"]:
+            print(
+                f"Promotion blocked for {challenger_result['name']}: "
+                f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+            )
+
+        if decision["should_promote"]:
+            new_version = promote_champion(
+                client=client,
+                registered_model_name=registered_model_name,
+                winner=challenger_result,
+                validation_start=validation_start,
+                validation_end=validation_end,
+                feature_rows=promotion_feature_rows,
+                alias=decision["alias"],
+            )
+            decision["active_result"]["registry_version"] = new_version
+            decision["active_result"]["source"] = "champion"
+            print(
+                f"{challenger_result['name']} -> promoted to {decision['alias']} version {new_version}"
+            )
+        elif champion_result is not None:
+            decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
+            print(
+                f"{champion_result['name']} -> retained as {decision['alias']} "
+                f"version {decision['champion_meta']['version']}"
+            )
+        else:
+            print(
+                f"{challenger_result['name']} -> no existing {decision['alias']} and not promoted"
+            )
+
+    best_registered_result = next(
+        (
+            result
+            for result in sorted(active_results_by_family.values(), key=ranking_key)
+            if result.get("registry_version") is not None
+        ),
+        None,
+    )
+    if best_registered_result is not None:
+        client.set_registered_model_alias(
+            registered_model_name,
+            CHAMPION_ALIAS,
+            best_registered_result["registry_version"],
+        )
+        active_result["best_overall_registry_version"] = best_registered_result["registry_version"]
+        print(
+            f"Current best across champions: {best_registered_result['candidate'].name} "
+            f"({best_registered_result['family']}) version {best_registered_result['registry_version']}"
+        )
+    else:
+        print("Current best across champions: no registered family champion available yet")
 
     prediction_record = build_prediction_record(
         active_result=active_result,
+        active_results_by_family=active_results_by_family,
         future_row=future_row,
         registered_model_name=registered_model_name,
     )
@@ -1222,14 +1352,7 @@ def main() -> None:
         mlflow.log_text(
             json.dumps(
                 [
-                    {
-                        "name": row["name"],
-                        "source": row["source"],
-                        "accuracy": row["accuracy"],
-                        "f1": row["f1"],
-                        "next_probability": row["next_probability"],
-                        "next_signal": row["next_signal"],
-                    }
+                    serialize_result(row)
                     for row in sorted(all_results, key=ranking_key)
                 ],
                 indent=2,
@@ -1239,38 +1362,6 @@ def main() -> None:
         mlflow.log_text(
             json.dumps(prediction_record, indent=2),
             LAST_PREDICTION_PATH.name,
-        )
-
-    print_scoreboard(all_results)
-
-    if null_model_block:
-        print(
-            f"Promotion blocked by null-model guard: "
-            f"{best_challenger['name']} scored F1={best_challenger['f1']:.3f}, "
-            f"Accuracy={best_challenger['accuracy']:.3f}"
-        )
-
-    if should_promote:
-        promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
-        new_version = promote_champion(
-            client=client,
-            registered_model_name=registered_model_name,
-            winner=best_challenger,
-            validation_start=validation_start,
-            validation_end=validation_end,
-            feature_rows=promotion_feature_rows,
-        )
-        print(
-            f"Winner this hour: {best_challenger['name']} -> promoted to champion version {new_version}"
-        )
-        active_result = best_challenger
-    elif champion_result is not None:
-        print(
-            f"Winner this hour: {champion_result['name']} -> champion retained"
-        )
-    else:
-        print(
-            f"Winner this hour: {best_challenger['name']} -> not promoted because it failed the null-model check"
         )
 
     print(
