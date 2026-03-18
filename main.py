@@ -42,7 +42,7 @@ VALIDATION_HOURS = 48
 SEQUENCE_LENGTH = 24
 SEED = 42
 DEVICE = torch.device("cpu")
-DEFAULT_EXPERIMENT = "btc-directional-tournament"
+DEFAULT_EXPERIMENT = "btc-tourney"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
 MODEL_ARTIFACT_NAME = "model"
@@ -557,8 +557,8 @@ def ranking_key(result: dict[str, Any]) -> tuple[float, float]:
     return (-result["f1"], -result["accuracy"])
 
 
-def champion_alias_for_family(family: str) -> str:
-    return f"{CHAMPION_ALIAS}-{family}"
+def registered_model_name_for_family(base_name: str, family: str) -> str:
+    return f"{base_name}-{family}"
 
 
 def serialize_result(
@@ -1117,6 +1117,7 @@ def build_prediction_record(
     model_predictions = {
         family: {
             **serialize_result(result),
+            "registered_model_name": registered_model_name_for_family(registered_model_name, family),
             "is_current_best": family == active_result["family"],
         }
         for family, result in sorted(active_results_by_family.items())
@@ -1211,12 +1212,15 @@ def main() -> None:
     for family, challenger_result in sorted(challenger_by_family.items()):
         champion_result: dict[str, Any] | None = None
         champion_meta: dict[str, str] | None = None
-        family_alias = champion_alias_for_family(family)
+        family_registered_model_name = registered_model_name_for_family(
+            registered_model_name,
+            family,
+        )
         if not args.reset_champion_from_challenger:
             champion_candidate, champion_meta = get_current_champion(
                 client,
-                registered_model_name,
-                alias=family_alias,
+                family_registered_model_name,
+                alias=CHAMPION_ALIAS,
             )
             if champion_candidate is not None and champion_meta is not None:
                 champion_result = evaluate_champion(
@@ -1232,7 +1236,7 @@ def main() -> None:
             challenger_result["f1"] <= 0.5 or challenger_result["accuracy"] <= 0.5
         )
         if champion_result is None:
-            should_promote = not null_model_block
+            should_promote = True
             active_family_result = challenger_result
         else:
             should_promote = (
@@ -1244,7 +1248,7 @@ def main() -> None:
         family_decisions.append(
             {
                 "family": family,
-                "alias": family_alias,
+                "registered_model_name": family_registered_model_name,
                 "challenger": challenger_result,
                 "champion": champion_result,
                 "champion_meta": champion_meta,
@@ -1261,36 +1265,41 @@ def main() -> None:
     for decision in family_decisions:
         challenger_result = decision["challenger"]
         champion_result = decision["champion"]
-        if decision["null_model_block"]:
+        if decision["null_model_block"] and champion_result is not None:
             print(
                 f"Promotion blocked for {challenger_result['name']}: "
+                f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+            )
+        elif decision["null_model_block"] and champion_result is None:
+            print(
+                f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
                 f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
             )
 
         if decision["should_promote"]:
             new_version = promote_champion(
                 client=client,
-                registered_model_name=registered_model_name,
+                registered_model_name=decision["registered_model_name"],
                 winner=challenger_result,
                 validation_start=validation_start,
                 validation_end=validation_end,
                 feature_rows=promotion_feature_rows,
-                alias=decision["alias"],
+                alias=CHAMPION_ALIAS,
             )
             decision["active_result"]["registry_version"] = new_version
             decision["active_result"]["source"] = "champion"
             print(
-                f"{challenger_result['name']} -> promoted to {decision['alias']} version {new_version}"
+                f"{challenger_result['name']} -> promoted to {decision['registered_model_name']} version {new_version}"
             )
         elif champion_result is not None:
             decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
             print(
-                f"{champion_result['name']} -> retained as {decision['alias']} "
+                f"{champion_result['name']} -> retained as {decision['registered_model_name']} "
                 f"version {decision['champion_meta']['version']}"
             )
         else:
             print(
-                f"{challenger_result['name']} -> no existing {decision['alias']} and not promoted"
+                f"{challenger_result['name']} -> no existing {decision['registered_model_name']} and not promoted"
             )
 
     best_registered_result = next(
@@ -1302,11 +1311,6 @@ def main() -> None:
         None,
     )
     if best_registered_result is not None:
-        client.set_registered_model_alias(
-            registered_model_name,
-            CHAMPION_ALIAS,
-            best_registered_result["registry_version"],
-        )
         active_result["best_overall_registry_version"] = best_registered_result["registry_version"]
         print(
             f"Current best across champions: {best_registered_result['candidate'].name} "

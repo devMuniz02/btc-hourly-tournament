@@ -49,21 +49,6 @@ def configure_tracking() -> tuple[MlflowClient, str, str]:
     return MlflowClient(), registered_model_name, experiment_name
 
 
-def get_current_champion_info(
-    client: MlflowClient,
-    registered_model_name: str,
-) -> dict[str, Any] | None:
-    try:
-        version = client.get_model_version_by_alias(registered_model_name, "champion")
-    except Exception:
-        return None
-    return {
-        "registered_model_name": registered_model_name,
-        "version": version.version,
-        "run_id": version.run_id,
-    }
-
-
 def load_last_prediction() -> dict[str, Any] | None:
     if LOCAL_LAST_PREDICTION_PATH.exists():
         return json.loads(LOCAL_LAST_PREDICTION_PATH.read_text(encoding="utf-8"))
@@ -805,7 +790,6 @@ def render_dashboard(
 
 def main() -> None:
     client, registered_model_name, experiment_name = configure_tracking()
-    champion = get_current_champion_info(client, registered_model_name)
     prediction_record = load_last_prediction()
     history = ensure_recent_history_slots(load_history())
 
@@ -925,7 +909,7 @@ def main() -> None:
         "Validation complete:",
         json.dumps(
             {
-                "champion_version": None if champion is None else champion["version"],
+                "champion_version": prediction_record.get("best_champion_version"),
                 "model_name": prediction_record.get("model_name"),
                 "predicted": predicted_label,
                 "actual": actual_label,
