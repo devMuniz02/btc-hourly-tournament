@@ -1040,58 +1040,67 @@ def promote_champion(
         save_candidate_package(candidate, package_dir)
         input_example, signature = build_model_logging_inputs(candidate, feature_rows)
         model_code_path = Path(__file__).with_name("mlflow_tournament_model.py")
+        active_run = mlflow.active_run()
+        if active_run is None:
+            raise RuntimeError("Champion promotion requires an active MLflow run.")
 
-        with mlflow.start_run(run_name=f"promote-{candidate.name}") as run:
-            mlflow.set_tags(
-                {
-                    "role": "champion_candidate",
-                    "model_name": candidate.name,
-                    "model_family": candidate.family,
-                    "champion_alias": alias,
-                    "validation_start": validation_start,
-                    "validation_end": validation_end,
-                }
-            )
-            mlflow.log_metrics(
-                {
-                    "accuracy": winner["accuracy"],
-                    "f1": winner["f1"],
-                    "next_probability": winner["next_probability"],
-                }
-            )
-            mlflow.pyfunc.log_model(
-                name=MODEL_ARTIFACT_NAME,
-                python_model=str(model_code_path),
-                artifacts={"model_dir": str(package_dir)},
-                registered_model_name=registered_model_name,
-                input_example=input_example,
-                signature=signature,
-                pip_requirements=build_model_pip_requirements(),
-            )
+        metric_prefix = candidate.family.replace("-", "_")
+        mlflow.set_tags(
+            {
+                f"{metric_prefix}_promotion_role": "champion_candidate",
+                f"{metric_prefix}_model_name": candidate.name,
+                f"{metric_prefix}_model_family": candidate.family,
+                f"{metric_prefix}_champion_alias": alias,
+                f"{metric_prefix}_validation_start": validation_start,
+                f"{metric_prefix}_validation_end": validation_end,
+            }
+        )
+        mlflow.log_metrics(
+            {
+                f"{metric_prefix}_promotion_accuracy": winner["accuracy"],
+                f"{metric_prefix}_promotion_f1": winner["f1"],
+                f"{metric_prefix}_promotion_next_probability": winner["next_probability"],
+            }
+        )
+        artifact_name = f"{MODEL_ARTIFACT_NAME}_{candidate.family}"
+        mlflow.pyfunc.log_model(
+            name=artifact_name,
+            python_model=str(model_code_path),
+            artifacts={"model_dir": str(package_dir)},
+            registered_model_name=registered_model_name,
+            input_example=input_example,
+            signature=signature,
+            pip_requirements=build_model_pip_requirements(),
+        )
 
-            versions = client.search_model_versions(f"run_id = '{run.info.run_id}'")
-            if not versions:
-                raise RuntimeError("Registered model version was not found for the promoted run.")
+        versions = client.search_model_versions(f"run_id = '{active_run.info.run_id}'")
+        matching_versions = [
+            version
+            for version in versions
+            if getattr(version, "name", "") == registered_model_name
+        ]
+        if not matching_versions:
+            raise RuntimeError("Registered model version was not found for the promoted run.")
 
-            version = sorted(versions, key=lambda item: int(item.version))[-1]
-            client.set_model_version_tag(
-                registered_model_name,
-                version.version,
-                "champion_alias",
-                alias,
-            )
-            client.set_model_version_tag(
-                registered_model_name,
-                version.version,
-                "tournament_model_name",
-                candidate.name,
-            )
-            client.set_registered_model_alias(
-                registered_model_name,
-                alias,
-                version.version,
-            )
-            return version.version
+        version = sorted(matching_versions, key=lambda item: int(item.version))[-1]
+        client.set_model_version_tag(
+            registered_model_name,
+            version.version,
+            "champion_alias",
+            alias,
+        )
+        client.set_model_version_tag(
+            registered_model_name,
+            version.version,
+            "tournament_model_name",
+            candidate.name,
+        )
+        client.set_registered_model_alias(
+            registered_model_name,
+            alias,
+            version.version,
+        )
+        return version.version
 
 
 def print_scoreboard(results: list[dict[str, Any]]) -> None:
@@ -1260,79 +1269,8 @@ def main() -> None:
 
     active_result = sorted(active_results_by_family.values(), key=ranking_key)[0]
 
-    print_scoreboard(all_results)
-    promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
-    for decision in family_decisions:
-        challenger_result = decision["challenger"]
-        champion_result = decision["champion"]
-        if decision["null_model_block"] and champion_result is not None:
-            print(
-                f"Promotion blocked for {challenger_result['name']}: "
-                f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
-            )
-        elif decision["null_model_block"] and champion_result is None:
-            print(
-                f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
-                f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
-            )
-
-        if decision["should_promote"]:
-            new_version = promote_champion(
-                client=client,
-                registered_model_name=decision["registered_model_name"],
-                winner=challenger_result,
-                validation_start=validation_start,
-                validation_end=validation_end,
-                feature_rows=promotion_feature_rows,
-                alias=CHAMPION_ALIAS,
-            )
-            decision["active_result"]["registry_version"] = new_version
-            decision["active_result"]["source"] = "champion"
-            print(
-                f"{challenger_result['name']} -> promoted to {decision['registered_model_name']} version {new_version}"
-            )
-        elif champion_result is not None:
-            decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
-            print(
-                f"{champion_result['name']} -> retained as {decision['registered_model_name']} "
-                f"version {decision['champion_meta']['version']}"
-            )
-        else:
-            print(
-                f"{challenger_result['name']} -> no existing {decision['registered_model_name']} and not promoted"
-            )
-
-    best_registered_result = next(
-        (
-            result
-            for result in sorted(active_results_by_family.values(), key=ranking_key)
-            if result.get("registry_version") is not None
-        ),
-        None,
-    )
-    if best_registered_result is not None:
-        active_result["best_overall_registry_version"] = best_registered_result["registry_version"]
-        print(
-            f"Current best across champions: {best_registered_result['candidate'].name} "
-            f"({best_registered_result['family']}) version {best_registered_result['registry_version']}"
-        )
-    else:
-        print("Current best across champions: no registered family champion available yet")
-
-    prediction_record = build_prediction_record(
-        active_result=active_result,
-        active_results_by_family=active_results_by_family,
-        future_row=future_row,
-        registered_model_name=registered_model_name,
-    )
-    log_step("Write latest prediction metadata")
-    LAST_PREDICTION_PATH.write_text(
-        json.dumps(prediction_record, indent=2),
-        encoding="utf-8",
-    )
-
-    log_step("Log tournament results to MLflow")
     with mlflow.start_run(run_name="btc-directional-tournament"):
+        print_scoreboard(all_results)
         mlflow.set_tags(
             {
                 "asset": SYMBOL,
@@ -1352,6 +1290,77 @@ def main() -> None:
                 "nn_epochs": 48,
             }
         )
+        promotion_feature_rows = pd.concat([train_df, valid_df], ignore_index=True)
+        for decision in family_decisions:
+            challenger_result = decision["challenger"]
+            champion_result = decision["champion"]
+            if decision["null_model_block"] and champion_result is not None:
+                print(
+                    f"Promotion blocked for {challenger_result['name']}: "
+                    f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+                )
+            elif decision["null_model_block"] and champion_result is None:
+                print(
+                    f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
+                    f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+                )
+
+            if decision["should_promote"]:
+                new_version = promote_champion(
+                    client=client,
+                    registered_model_name=decision["registered_model_name"],
+                    winner=challenger_result,
+                    validation_start=validation_start,
+                    validation_end=validation_end,
+                    feature_rows=promotion_feature_rows,
+                    alias=CHAMPION_ALIAS,
+                )
+                decision["active_result"]["registry_version"] = new_version
+                decision["active_result"]["source"] = "champion"
+                print(
+                    f"{challenger_result['name']} -> promoted to {decision['registered_model_name']} version {new_version}"
+                )
+            elif champion_result is not None:
+                decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
+                print(
+                    f"{champion_result['name']} -> retained as {decision['registered_model_name']} "
+                    f"version {decision['champion_meta']['version']}"
+                )
+            else:
+                print(
+                    f"{challenger_result['name']} -> no existing {decision['registered_model_name']} and not promoted"
+                )
+
+        best_registered_result = next(
+            (
+                result
+                for result in sorted(active_results_by_family.values(), key=ranking_key)
+                if result.get("registry_version") is not None
+            ),
+            None,
+        )
+        if best_registered_result is not None:
+            active_result["best_overall_registry_version"] = best_registered_result["registry_version"]
+            print(
+                f"Current best across champions: {best_registered_result['candidate'].name} "
+                f"({best_registered_result['family']}) version {best_registered_result['registry_version']}"
+            )
+        else:
+            print("Current best across champions: no registered family champion available yet")
+
+        prediction_record = build_prediction_record(
+            active_result=active_result,
+            active_results_by_family=active_results_by_family,
+            future_row=future_row,
+            registered_model_name=registered_model_name,
+        )
+        log_step("Write latest prediction metadata")
+        LAST_PREDICTION_PATH.write_text(
+            json.dumps(prediction_record, indent=2),
+            encoding="utf-8",
+        )
+
+        log_step("Log tournament results to MLflow")
         log_challenger_summary(challenger_results)
         mlflow.log_text(
             json.dumps(
