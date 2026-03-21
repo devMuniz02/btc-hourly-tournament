@@ -81,7 +81,7 @@ jobs:
             [ -f history.csv ] && git add history.csv
             [ -f assets/dashboard.png ] && git add assets/dashboard.png
             if [ -n "$(git status --porcelain)" ]; then
-              git commit -m "Update BTC validation dashboard [skip ci]"
+              git commit -m "BTC dash [skip ci]"
               success=false
               for attempt in 1 2 3 4 5; do
                 echo "Artifact push attempt $attempt (merge strategy)"
@@ -127,7 +127,7 @@ jobs:
             [ -f history.csv ] && git add history.csv
             [ -f assets/dashboard.png ] && git add assets/dashboard.png
             if [ -n "$(git status --porcelain)" ]; then
-              git commit -m "Update BTC bot artifacts [skip ci]"
+              git commit -m "BTC artifacts [skip ci]"
               success=false
               for attempt in 1 2 3 4 5; do
                 echo "Artifact push attempt $attempt (merge strategy)"
