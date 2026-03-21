@@ -913,12 +913,12 @@ def build_results(
 
     results = []
     for candidate in candidates:
-        full_probs = predict_candidate_probabilities(candidate, eval_frame)
-        valid_probs = full_probs[val_start:]
+        prediction_probs = predict_candidate_probabilities(candidate, prediction_frame)
+        valid_probs = prediction_probs[val_start:-1]
         if np.isnan(valid_probs).any():
             raise RuntimeError(f"{candidate.name} produced incomplete validation output.")
         metrics = evaluate_probabilities(valid_probs, actual_valid)
-        next_probability = float(predict_candidate_probabilities(candidate, prediction_frame)[-1])
+        next_probability = float(prediction_probs[-1])
         cv_metrics = (cv_summary or {}).get(candidate.family, {})
         results.append(
             {
@@ -1143,13 +1143,13 @@ def evaluate_champion(
     val_start = len(train_df)
     valid_labels = valid_df["target"].to_numpy(dtype=np.int32)
 
-    probs = predict_candidate_probabilities(champion, eval_frame)
-    valid_probs = probs[val_start:]
+    prediction_probs = predict_candidate_probabilities(champion, prediction_frame)
+    valid_probs = prediction_probs[val_start:-1]
     if np.isnan(valid_probs).any():
         raise RuntimeError("Champion produced incomplete validation output.")
 
     metrics = evaluate_probabilities(valid_probs, valid_labels)
-    next_probability = float(predict_candidate_probabilities(champion, prediction_frame)[-1])
+    next_probability = float(prediction_probs[-1])
     return {
         "name": champion.name,
         "family": champion.family,

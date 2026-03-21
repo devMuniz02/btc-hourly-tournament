@@ -157,38 +157,6 @@ def enrich_prediction_record(
     return updated
 
 
-def train_daily_challengers_fast(
-    train_df: pd.DataFrame,
-    valid_df: pd.DataFrame,
-) -> tuple[list[tournament.TournamentCandidate], dict[str, dict[str, float]]]:
-    tournament.log_step("Prepare challenger datasets (fast daily refresh)")
-    sequence_splits = tournament.prepare_sequence_splits(
-        train_df,
-        valid_df,
-        tournament.FEATURE_COLUMNS,
-        tournament.SEQUENCE_LENGTH,
-    )
-    challengers = tournament.build_challenger_candidates(
-        train_seq_y=sequence_splits["train_seq_y"],
-        scaler=sequence_splits["scaler"],
-    )
-
-    for candidate in challengers:
-        print(f"Training daily challenger: {candidate.name}", flush=True)
-        tournament.fit_candidate(
-            candidate,
-            train_flat_x=sequence_splits["train_flat_x"],
-            train_seq_x=sequence_splits["train_seq_x"],
-            train_seq_y=sequence_splits["train_seq_y"],
-            valid_flat_x=sequence_splits["valid_flat_x"],
-            valid_seq_x=sequence_splits["valid_seq_x"],
-            valid_seq_y=sequence_splits["valid_seq_y"],
-        )
-        print(f"Finished daily challenger: {candidate.name}", flush=True)
-
-    return challengers, {}
-
-
 def log_prediction_record(
     prediction_record: dict[str, Any],
     active_result: dict[str, Any],
@@ -335,7 +303,7 @@ def run_full_refresh(
     validation_end = valid_df["timestamp"].iloc[-1].isoformat()
 
     tournament.log_step("Train challenger zoo")
-    challengers, cv_summary = train_daily_challengers_fast(train_df, valid_df)
+    challengers, cv_summary = tournament.train_challengers(train_df, valid_df)
     challenger_results = tournament.build_results(
         challengers,
         train_df,
