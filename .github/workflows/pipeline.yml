@@ -82,8 +82,28 @@ jobs:
             [ -f assets/dashboard.png ] && git add assets/dashboard.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "Update BTC validation dashboard [skip ci]"
-              git pull --no-rebase origin main
-              git push origin HEAD:main
+              success=false
+              for attempt in 1 2 3 4 5; do
+                echo "Artifact push attempt $attempt (merge strategy)"
+                if git pull --no-rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                echo "Artifact push attempt $attempt (rebase fallback)"
+                if git pull --rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                sleep 2
+              done
+              if [ "$success" != "true" ]; then
+                echo "Failed to push dashboard artifacts after 5 attempts."
+                exit 1
+              fi
             fi
           fi
 
@@ -108,8 +128,28 @@ jobs:
             [ -f assets/dashboard.png ] && git add assets/dashboard.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "Update BTC bot artifacts [skip ci]"
-              git pull --no-rebase origin main
-              git push origin HEAD:main
+              success=false
+              for attempt in 1 2 3 4 5; do
+                echo "Artifact push attempt $attempt (merge strategy)"
+                if git pull --no-rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                echo "Artifact push attempt $attempt (rebase fallback)"
+                if git pull --rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                sleep 2
+              done
+              if [ "$success" != "true" ]; then
+                echo "Failed to push prediction artifacts after 5 attempts."
+                exit 1
+              fi
             fi
           fi
 
