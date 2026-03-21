@@ -83,7 +83,7 @@ jobs:
             [ -f assets/dailydashboard.png ] && git add assets/dailydashboard.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "Update BTC daily validation dashboard [skip ci]"
-              git pull --rebase origin main
+              git pull --no-rebase origin main
               git push origin HEAD:main
             fi
           fi
@@ -109,7 +109,7 @@ jobs:
             [ -f assets/dailydashboard.png ] && git add assets/dailydashboard.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "Update BTC daily bot artifacts [skip ci]"
-              git pull --rebase origin main
+              git pull --no-rebase origin main
               git push origin HEAD:main
             fi
           fi
