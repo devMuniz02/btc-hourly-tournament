@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+"""
+Hourly BTC prediction pipeline with once-daily model refresh at midnight ET.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import traceback
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import mlflow
+import pandas as pd
+from mlflow import MlflowClient
+
+import main as tournament
+
+
+DAILY_LAST_PREDICTION_PATH = Path("last_prediction_daily.json")
+EASTERN_TZ = ZoneInfo("America/New_York")
+MODEL_FAMILIES = (
+    "rf",
+    "xgb",
+    "mlp_sklearn",
+    "lstm",
+    "transformer",
+    "nn",
+)
+
+
+def configure_daily_paths() -> None:
+    tournament.LAST_PREDICTION_PATH = DAILY_LAST_PREDICTION_PATH
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run hourly BTC predictions while refreshing family champions once per day at midnight ET."
+    )
+    parser.add_argument(
+        "--reset-champion-from-challenger",
+        action="store_true",
+        help="Ignore the current champion comparison and choose from the top challenger only during the daily refresh.",
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Force a full daily model refresh even when the current ET hour is not midnight.",
+    )
+    return parser.parse_args()
+
+
+def should_refresh_daily_models(now: pd.Timestamp | None = None) -> bool:
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if current.tzinfo is None:
+        current = current.tz_localize("UTC")
+    eastern_now = current.tz_convert(EASTERN_TZ)
+    return eastern_now.hour == 0
+
+
+def champions_trained_for_current_et_day(
+    client: MlflowClient,
+    registered_model_name: str,
+    now: pd.Timestamp | None = None,
+) -> bool:
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if current.tzinfo is None:
+        current = current.tz_localize("UTC")
+    current_et_day = current.tz_convert(EASTERN_TZ).date()
+
+    for family in MODEL_FAMILIES:
+        family_registered_model_name = tournament.registered_model_name_for_family(
+            registered_model_name,
+            family,
+        )
+        try:
+            version = client.get_model_version_by_alias(
+                family_registered_model_name,
+                tournament.CHAMPION_ALIAS,
+            )
+        except Exception:
+            print(f"No champion alias found for family {family}.")
+            return False
+
+        creation_timestamp = getattr(version, "creation_timestamp", None)
+        if creation_timestamp is None:
+            print(
+                f"Champion version {version.version} for family {family} has no creation timestamp."
+            )
+            return False
+
+        version_et_day = (
+            pd.Timestamp(creation_timestamp, unit="ms", tz="UTC")
+            .tz_convert(EASTERN_TZ)
+            .date()
+        )
+        if version_et_day != current_et_day:
+            print(
+                f"Champion version {version.version} for family {family} is from "
+                f"{version_et_day.isoformat()} ET, not {current_et_day.isoformat()} ET."
+            )
+            return False
+
+    return True
+
+
+def fetch_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    tournament.log_step("Fetch BTC/USDT market data")
+    raw = tournament.fetch_ohlcv(
+        limit=tournament.LOOKBACK_HOURS,
+        min_candles=5000,
+        retry_binanceus=True,
+        retry_binanceus_attempts=3,
+    )
+    tournament.log_step("Build features and dataset splits")
+    featured = tournament.add_features(raw)
+    train_df, valid_df, future_row = tournament.split_dataset(
+        featured,
+        tournament.VALIDATION_HOURS,
+    )
+    return raw, train_df, valid_df, future_row
+
+
+def log_prediction_record(
+    prediction_record: dict[str, Any],
+    active_result: dict[str, Any],
+    active_results_by_family: dict[str, dict[str, Any]],
+    *,
+    run_name: str,
+    daily_model_refresh: bool,
+) -> None:
+    with mlflow.start_run(run_name=run_name):
+        tournament.print_scoreboard(list(active_results_by_family.values()))
+        mlflow.set_tags(
+            {
+                "asset": tournament.SYMBOL,
+                "timeframe": tournament.TIMEFRAME,
+                "validation_hours": str(tournament.VALIDATION_HOURS),
+                "daily_model_refresh": str(daily_model_refresh).lower(),
+            }
+        )
+        tournament.log_comparison_metrics(
+            active_results_by_family=active_results_by_family,
+            active_result=active_result,
+        )
+        mlflow.log_text(
+            json.dumps(prediction_record, indent=2),
+            DAILY_LAST_PREDICTION_PATH.name,
+        )
+
+
+def write_prediction_record(
+    active_result: dict[str, Any],
+    active_results_by_family: dict[str, dict[str, Any]],
+    future_row: pd.DataFrame,
+    registered_model_name: str,
+    *,
+    run_name: str,
+    daily_model_refresh: bool,
+) -> None:
+    prediction_record = tournament.build_prediction_record(
+        active_result=active_result,
+        active_results_by_family=active_results_by_family,
+        future_row=future_row,
+        registered_model_name=registered_model_name,
+    )
+    tournament.log_step("Write latest daily prediction metadata")
+    DAILY_LAST_PREDICTION_PATH.write_text(
+        json.dumps(prediction_record, indent=2),
+        encoding="utf-8",
+    )
+    log_prediction_record(
+        prediction_record,
+        active_result,
+        active_results_by_family,
+        run_name=run_name,
+        daily_model_refresh=daily_model_refresh,
+    )
+    print(
+        f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
+    )
+    print(f"Final signal: {active_result['next_signal']}")
+
+
+def load_registered_champions(
+    client: MlflowClient,
+    registered_model_name: str,
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    future_row: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
+    active_results_by_family: dict[str, dict[str, Any]] = {}
+    missing_families: list[str] = []
+
+    for family in MODEL_FAMILIES:
+        family_registered_model_name = tournament.registered_model_name_for_family(
+            registered_model_name,
+            family,
+        )
+        champion_candidate, champion_meta = tournament.get_current_champion(
+            client,
+            family_registered_model_name,
+            alias=tournament.CHAMPION_ALIAS,
+        )
+        if champion_candidate is None or champion_meta is None:
+            missing_families.append(family)
+            continue
+
+        champion_result = tournament.evaluate_champion(
+            champion_candidate,
+            train_df,
+            valid_df,
+            future_row,
+        )
+        champion_result["registry_version"] = champion_meta["version"]
+        active_results_by_family[family] = champion_result
+
+    if missing_families:
+        missing = ", ".join(sorted(missing_families))
+        raise RuntimeError(
+            "Prediction-only mode requires an existing champion for every family. "
+            f"Missing champion aliases for: {missing}"
+        )
+
+    return active_results_by_family
+
+
+def run_prediction_only(
+    client: MlflowClient,
+    registered_model_name: str,
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    future_row: pd.DataFrame,
+) -> None:
+    tournament.log_step("Load registered family champions for hourly prediction")
+    active_results_by_family = load_registered_champions(
+        client,
+        registered_model_name,
+        train_df,
+        valid_df,
+        future_row,
+    )
+    active_result = sorted(active_results_by_family.values(), key=tournament.ranking_key)[0]
+    write_prediction_record(
+        active_result,
+        active_results_by_family,
+        future_row,
+        registered_model_name,
+        run_name="btc-directional-daily-hourly-prediction",
+        daily_model_refresh=False,
+    )
+
+
+def run_full_refresh(
+    args: argparse.Namespace,
+    client: MlflowClient,
+    registered_model_name: str,
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    future_row: pd.DataFrame,
+) -> None:
+    validation_start = valid_df["timestamp"].iloc[0].isoformat()
+    validation_end = valid_df["timestamp"].iloc[-1].isoformat()
+
+    tournament.log_step("Train challenger zoo")
+    challengers, cv_summary = tournament.train_challengers(train_df, valid_df)
+    challenger_results = tournament.build_results(
+        challengers,
+        train_df,
+        valid_df,
+        future_row,
+        cv_summary=cv_summary,
+    )
+    full_labeled_df = pd.concat([train_df, valid_df], ignore_index=True)
+    refit_challengers = tournament.retrain_challengers_on_full_data(full_labeled_df)
+    refit_by_family = {candidate.family: candidate for candidate in refit_challengers}
+    full_prediction_frame = pd.concat([full_labeled_df, future_row], ignore_index=True)
+    for result in challenger_results:
+        refit_candidate = refit_by_family[result["family"]]
+        result["candidate"] = refit_candidate
+        result["next_probability"] = float(
+            tournament.predict_candidate_probabilities(refit_candidate, full_prediction_frame)[-1]
+        )
+        result["next_signal"] = tournament.prediction_to_signal(result["next_probability"])
+
+    all_results = list(challenger_results)
+    challenger_by_family = {result["family"]: result for result in challenger_results}
+    family_decisions: list[dict[str, Any]] = []
+    active_results_by_family: dict[str, dict[str, Any]] = {}
+
+    if args.reset_champion_from_challenger:
+        print("Champion comparison disabled. Selecting from the current challenger leaderboard only.")
+
+    for family, challenger_result in sorted(challenger_by_family.items()):
+        champion_result: dict[str, Any] | None = None
+        champion_meta: dict[str, str] | None = None
+        family_registered_model_name = tournament.registered_model_name_for_family(
+            registered_model_name,
+            family,
+        )
+        if not args.reset_champion_from_challenger:
+            champion_candidate, champion_meta = tournament.get_current_champion(
+                client,
+                family_registered_model_name,
+                alias=tournament.CHAMPION_ALIAS,
+            )
+            if champion_candidate is not None and champion_meta is not None:
+                champion_result = tournament.evaluate_champion(
+                    champion_candidate,
+                    train_df,
+                    valid_df,
+                    future_row,
+                )
+                champion_result["registry_version"] = champion_meta["version"]
+                all_results.append(champion_result)
+
+        null_model_block = (
+            challenger_result["f1"] <= 0.5 or challenger_result["accuracy"] <= 0.5
+        )
+        if champion_result is None:
+            should_promote = True
+            active_family_result = challenger_result
+        else:
+            should_promote = (
+                challenger_result["f1"] > champion_result["f1"] and not null_model_block
+            )
+            active_family_result = challenger_result if should_promote else champion_result
+
+        active_results_by_family[family] = active_family_result
+        family_decisions.append(
+            {
+                "family": family,
+                "registered_model_name": family_registered_model_name,
+                "challenger": challenger_result,
+                "champion": champion_result,
+                "champion_meta": champion_meta,
+                "should_promote": should_promote,
+                "null_model_block": null_model_block,
+                "active_result": active_family_result,
+            }
+        )
+
+    active_result = sorted(active_results_by_family.values(), key=tournament.ranking_key)[0]
+
+    with mlflow.start_run(run_name="btc-directional-daily-refresh"):
+        tournament.print_scoreboard(all_results)
+        mlflow.set_tags(
+            {
+                "asset": tournament.SYMBOL,
+                "timeframe": tournament.TIMEFRAME,
+                "validation_hours": str(tournament.VALIDATION_HOURS),
+                "daily_model_refresh": "true",
+            }
+        )
+        mlflow.log_params(
+            {
+                "lookback_hours": tournament.LOOKBACK_HOURS,
+                "validation_hours": tournament.VALIDATION_HOURS,
+                "cross_validation_folds": tournament.CROSS_VALIDATION_FOLDS,
+                "sequence_length": tournament.SEQUENCE_LENGTH,
+                "rf_estimators": 400,
+                "xgb_estimators": 500,
+                "lstm_epochs": 40,
+                "transformer_epochs": 36,
+                "nn_epochs": 48,
+            }
+        )
+        promotion_feature_rows = full_labeled_df
+        for decision in family_decisions:
+            challenger_result = decision["challenger"]
+            champion_result = decision["champion"]
+            if decision["null_model_block"] and champion_result is not None:
+                print(
+                    f"Promotion blocked for {challenger_result['name']}: "
+                    f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+                )
+            elif decision["null_model_block"] and champion_result is None:
+                print(
+                    f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
+                    f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
+                )
+
+            if decision["should_promote"]:
+                new_version = tournament.promote_champion(
+                    client=client,
+                    registered_model_name=decision["registered_model_name"],
+                    winner=challenger_result,
+                    validation_start=validation_start,
+                    validation_end=validation_end,
+                    feature_rows=promotion_feature_rows,
+                    alias=tournament.CHAMPION_ALIAS,
+                )
+                decision["active_result"]["registry_version"] = new_version
+                decision["active_result"]["source"] = "champion"
+                print(
+                    f"{challenger_result['name']} -> promoted to {decision['registered_model_name']} version {new_version}"
+                )
+            elif champion_result is not None:
+                decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
+                print(
+                    f"{champion_result['name']} -> retained as {decision['registered_model_name']} "
+                    f"version {decision['champion_meta']['version']}"
+                )
+            else:
+                print(
+                    f"{challenger_result['name']} -> no existing {decision['registered_model_name']} and not promoted"
+                )
+
+        best_registered_result = next(
+            (
+                result
+                for result in sorted(active_results_by_family.values(), key=tournament.ranking_key)
+                if result.get("registry_version") is not None
+            ),
+            None,
+        )
+        if best_registered_result is not None:
+            active_result["best_overall_registry_version"] = best_registered_result["registry_version"]
+            print(
+                f"Current best across champions: {best_registered_result['candidate'].name} "
+                f"({best_registered_result['family']}) version {best_registered_result['registry_version']}"
+            )
+        else:
+            print("Current best across champions: no registered family champion available yet")
+
+        prediction_record = tournament.build_prediction_record(
+            active_result=active_result,
+            active_results_by_family=active_results_by_family,
+            future_row=future_row,
+            registered_model_name=registered_model_name,
+        )
+        tournament.log_step("Write latest daily prediction metadata")
+        DAILY_LAST_PREDICTION_PATH.write_text(
+            json.dumps(prediction_record, indent=2),
+            encoding="utf-8",
+        )
+
+        tournament.log_step("Log tournament results to MLflow")
+        tournament.log_challenger_summary(challenger_results)
+        tournament.log_comparison_metrics(
+            active_results_by_family=active_results_by_family,
+            active_result=active_result,
+        )
+        mlflow.log_text(
+            json.dumps(
+                [tournament.serialize_result(row) for row in sorted(all_results, key=tournament.ranking_key)],
+                indent=2,
+            ),
+            "tournament_results.json",
+        )
+        mlflow.log_text(
+            json.dumps(prediction_record, indent=2),
+            DAILY_LAST_PREDICTION_PATH.name,
+        )
+
+    print(
+        f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
+    )
+    print(f"Final signal: {active_result['next_signal']}")
+
+
+def write_failed_prediction_record(exc: Exception) -> None:
+    target_timestamp = (pd.Timestamp.utcnow().floor("h") + pd.Timedelta(hours=1)).isoformat()
+    failure_record = {
+        "status": "failed",
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "registered_model_name": tournament.get_env_str("MLFLOW_MODEL_NAME")
+        or tournament.DEFAULT_MODEL_NAME,
+        "symbol": tournament.SYMBOL,
+        "timeframe": tournament.TIMEFRAME,
+        "target_candle_timestamp": target_timestamp,
+        "error": str(exc),
+    }
+    DAILY_LAST_PREDICTION_PATH.write_text(
+        json.dumps(failure_record, indent=2),
+        encoding="utf-8",
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    configure_daily_paths()
+    tournament.log_step("Initialize daily BTC pipeline")
+    tournament.set_seed()
+    registered_model_name = tournament.configure_tracking()
+    client = MlflowClient()
+    _, train_df, valid_df, future_row = fetch_dataset()
+
+    midnight_refresh_due = should_refresh_daily_models()
+    current_day_has_models = champions_trained_for_current_et_day(
+        client,
+        registered_model_name,
+    )
+    refresh_due = args.force_refresh or midnight_refresh_due or not current_day_has_models
+    print(f"Midnight ET refresh due: {str(midnight_refresh_due).lower()}")
+    print(f"Current ET day already has fresh champions: {str(current_day_has_models).lower()}")
+    print(f"Daily model refresh due: {str(refresh_due).lower()}")
+
+    if refresh_due:
+        run_full_refresh(
+            args,
+            client,
+            registered_model_name,
+            train_df,
+            valid_df,
+            future_row,
+        )
+        return
+
+    run_prediction_only(
+        client,
+        registered_model_name,
+        train_df,
+        valid_df,
+        future_row,
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        write_failed_prediction_record(exc)
+        print(f"Fatal error: {exc}")
+        traceback.print_exc()
+        raise
