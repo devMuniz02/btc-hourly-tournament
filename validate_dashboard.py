@@ -40,6 +40,11 @@ HISTORY_COLUMNS = [
     "best_champion_name",
     "best_champion_family",
     "best_champion_version",
+    "workflow_name",
+    "workflow_variant",
+    "daily_model_refresh",
+    "model_refresh_et_date",
+    "prediction_generated_at",
 ]
 
 
@@ -59,7 +64,12 @@ def ensure_history_schema(history: pd.DataFrame) -> pd.DataFrame:
     updated = history.copy()
     for column in HISTORY_COLUMNS:
         if column not in updated.columns:
-            updated[column] = "" if column.startswith("best_champion") or column == "model_predictions" else pd.NA
+            updated[column] = (
+                ""
+                if column.startswith("best_champion")
+                or column in {"model_predictions", "workflow_name", "workflow_variant", "model_refresh_et_date", "prediction_generated_at"}
+                else pd.NA
+            )
     return updated[HISTORY_COLUMNS]
 
 
@@ -177,12 +187,15 @@ def load_history() -> pd.DataFrame:
     history = pd.read_csv(HISTORY_PATH)
     if history.empty:
         return pd.DataFrame(columns=HISTORY_COLUMNS)
+    original_columns = list(history.columns)
     history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True)
     if "failed" not in history.columns:
         history["failed"] = 0
     if "status" not in history.columns:
         history["status"] = "validated"
     history = ensure_history_schema(history)
+    if original_columns != HISTORY_COLUMNS:
+        history.to_csv(HISTORY_PATH, index=False)
     return history
 
 
@@ -280,6 +293,11 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
                 "best_champion_name": "",
                 "best_champion_family": "",
                 "best_champion_version": "",
+                "workflow_name": "",
+                "workflow_variant": "",
+                "daily_model_refresh": pd.NA,
+                "model_refresh_et_date": "",
+                "prediction_generated_at": "",
             }
         )
 
@@ -753,6 +771,9 @@ def render_dashboard(
         ["Current Best Champion", prediction_record.get("best_champion_name", "--") if prediction_record else "--"],
         ["Best Champion Family", prediction_record.get("best_champion_family", "--") if prediction_record else "--"],
         ["Best Champion Version", prediction_record.get("best_champion_version", "--") if prediction_record else "--"],
+        ["Workflow", prediction_record.get("workflow_variant", "--") if prediction_record else "--"],
+        ["Daily Refresh Run", str(bool(prediction_record.get("daily_model_refresh"))) if prediction_record and prediction_record.get("daily_model_refresh") is not None else "--"],
+        ["Model Day (ET)", prediction_record.get("model_refresh_et_date", "--") if prediction_record else "--"],
         ["Total Predictions", stats["total_predictions"]],
         ["Total Correct", stats["total_correct"]],
         ["Total Accuracy %", f"{stats['total_accuracy_pct']:.1f}%"],
@@ -846,6 +867,11 @@ def main() -> None:
                 "best_champion_name": prediction_record.get("best_champion_name", ""),
                 "best_champion_family": prediction_record.get("best_champion_family", ""),
                 "best_champion_version": prediction_record.get("best_champion_version", ""),
+                "workflow_name": prediction_record.get("workflow_name", ""),
+                "workflow_variant": prediction_record.get("workflow_variant", ""),
+                "daily_model_refresh": prediction_record.get("daily_model_refresh", pd.NA),
+                "model_refresh_et_date": prediction_record.get("model_refresh_et_date", ""),
+                "prediction_generated_at": prediction_record.get("prediction_generated_at", ""),
             },
         )
         stats = compute_stats(history)
@@ -898,6 +924,11 @@ def main() -> None:
             "best_champion_name": prediction_record.get("best_champion_name", ""),
             "best_champion_family": prediction_record.get("best_champion_family", ""),
             "best_champion_version": prediction_record.get("best_champion_version", ""),
+            "workflow_name": prediction_record.get("workflow_name", ""),
+            "workflow_variant": prediction_record.get("workflow_variant", ""),
+            "daily_model_refresh": prediction_record.get("daily_model_refresh", pd.NA),
+            "model_refresh_et_date": prediction_record.get("model_refresh_et_date", ""),
+            "prediction_generated_at": prediction_record.get("prediction_generated_at", ""),
         },
     )
     stats = compute_stats(history)

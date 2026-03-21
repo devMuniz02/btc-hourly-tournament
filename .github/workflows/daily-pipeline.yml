@@ -21,6 +21,7 @@ jobs:
       MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
       MLFLOW_MODEL_NAME: ${{ secrets.MLFLOW_MODEL_NAME }}
+      MLFLOW_DAILY_MODEL_NAME: ${{ secrets.MLFLOW_DAILY_MODEL_NAME }}
 
     steps:
       - name: Checkout repository

@@ -21,6 +21,10 @@ import main as tournament
 
 DAILY_LAST_PREDICTION_PATH = Path("last_prediction_daily.json")
 EASTERN_TZ = ZoneInfo("America/New_York")
+DAILY_WORKFLOW_NAME = "daily-hourly"
+DAILY_WORKFLOW_VARIANT = "daily_model_hourly_prediction"
+DAILY_EXPERIMENT_PREFIX = "btc-daily"
+DAILY_MODEL_NAME_SUFFIX = "-daily"
 MODEL_FAMILIES = (
     "rf",
     "xgb",
@@ -33,6 +37,21 @@ MODEL_FAMILIES = (
 
 def configure_daily_paths() -> None:
     tournament.LAST_PREDICTION_PATH = DAILY_LAST_PREDICTION_PATH
+
+
+def resolve_daily_registered_model_name() -> str:
+    explicit_name = tournament.get_env_str("MLFLOW_DAILY_MODEL_NAME")
+    if explicit_name:
+        return explicit_name
+    base_name = tournament.get_env_str("MLFLOW_MODEL_NAME") or tournament.DEFAULT_MODEL_NAME
+    return f"{base_name}{DAILY_MODEL_NAME_SUFFIX}"
+
+
+def configure_daily_tracking() -> str:
+    tournament.DEFAULT_EXPERIMENT_PREFIX = DAILY_EXPERIMENT_PREFIX
+    registered_model_name = resolve_daily_registered_model_name()
+    tournament.configure_tracking()
+    return registered_model_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,6 +142,21 @@ def fetch_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
     return raw, train_df, valid_df, future_row
 
 
+def enrich_prediction_record(
+    prediction_record: dict[str, Any],
+    *,
+    daily_model_refresh: bool,
+) -> dict[str, Any]:
+    current_et_day = pd.Timestamp.now(tz="UTC").tz_convert(EASTERN_TZ).date().isoformat()
+    updated = dict(prediction_record)
+    updated["workflow_name"] = DAILY_WORKFLOW_NAME
+    updated["workflow_variant"] = DAILY_WORKFLOW_VARIANT
+    updated["daily_model_refresh"] = bool(daily_model_refresh)
+    updated["model_refresh_et_date"] = current_et_day
+    updated["prediction_generated_at"] = updated.get("generated_at")
+    return updated
+
+
 def log_prediction_record(
     prediction_record: dict[str, Any],
     active_result: dict[str, Any],
@@ -165,6 +199,10 @@ def write_prediction_record(
         active_results_by_family=active_results_by_family,
         future_row=future_row,
         registered_model_name=registered_model_name,
+    )
+    prediction_record = enrich_prediction_record(
+        prediction_record,
+        daily_model_refresh=daily_model_refresh,
     )
     tournament.log_step("Write latest daily prediction metadata")
     DAILY_LAST_PREDICTION_PATH.write_text(
@@ -431,6 +469,10 @@ def run_full_refresh(
             future_row=future_row,
             registered_model_name=registered_model_name,
         )
+        prediction_record = enrich_prediction_record(
+            prediction_record,
+            daily_model_refresh=True,
+        )
         tournament.log_step("Write latest daily prediction metadata")
         DAILY_LAST_PREDICTION_PATH.write_text(
             json.dumps(prediction_record, indent=2),
@@ -466,12 +508,16 @@ def write_failed_prediction_record(exc: Exception) -> None:
     failure_record = {
         "status": "failed",
         "generated_at": pd.Timestamp.utcnow().isoformat(),
-        "registered_model_name": tournament.get_env_str("MLFLOW_MODEL_NAME")
-        or tournament.DEFAULT_MODEL_NAME,
+        "registered_model_name": resolve_daily_registered_model_name(),
         "symbol": tournament.SYMBOL,
         "timeframe": tournament.TIMEFRAME,
         "target_candle_timestamp": target_timestamp,
         "error": str(exc),
+        "workflow_name": DAILY_WORKFLOW_NAME,
+        "workflow_variant": DAILY_WORKFLOW_VARIANT,
+        "daily_model_refresh": False,
+        "model_refresh_et_date": pd.Timestamp.now(tz="UTC").tz_convert(EASTERN_TZ).date().isoformat(),
+        "prediction_generated_at": pd.Timestamp.utcnow().isoformat(),
     }
     DAILY_LAST_PREDICTION_PATH.write_text(
         json.dumps(failure_record, indent=2),
@@ -484,7 +530,7 @@ def main() -> None:
     configure_daily_paths()
     tournament.log_step("Initialize daily BTC pipeline")
     tournament.set_seed()
-    registered_model_name = tournament.configure_tracking()
+    registered_model_name = configure_daily_tracking()
     client = MlflowClient()
     _, train_df, valid_df, future_row = fetch_dataset()
 
