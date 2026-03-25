@@ -16,6 +16,36 @@ from market_hours_common import is_allowed_prediction_target_timestamp
 dashboard.HISTORY_PATH = Path("history_market_hours.csv")
 dashboard.DASHBOARD_PATH = Path("assets/dashboard_market_hours.png")
 dashboard.LOCAL_LAST_PREDICTION_PATH = Path("last_prediction_market_hours.json")
+ORIGINAL_LOAD_LAST_PREDICTION = dashboard.load_last_prediction
+
+
+def sanitize_prediction_record(
+    prediction_record: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if prediction_record is None:
+        return None
+
+    updated = dict(prediction_record)
+    target_raw = updated.get("target_candle_timestamp") or updated.get("generated_at")
+    if not target_raw:
+        return None
+
+    target_timestamp = pd.Timestamp(target_raw)
+    if target_timestamp.tzinfo is None:
+        target_timestamp = target_timestamp.tz_localize("UTC")
+    else:
+        target_timestamp = target_timestamp.tz_convert("UTC")
+
+    updated["target_candle_timestamp"] = target_timestamp.isoformat()
+    if not updated.get("reference_candle_timestamp"):
+        updated["reference_candle_timestamp"] = (
+            target_timestamp - pd.Timedelta(hours=1)
+        ).isoformat()
+    return updated
+
+
+def load_last_prediction_market_hours() -> dict[str, object] | None:
+    return sanitize_prediction_record(ORIGINAL_LOAD_LAST_PREDICTION())
 
 
 def ensure_recent_history_slots_market_hours(
@@ -80,6 +110,7 @@ def ensure_recent_history_slots_market_hours(
     return updated
 
 
+dashboard.load_last_prediction = load_last_prediction_market_hours
 dashboard.ensure_recent_history_slots = ensure_recent_history_slots_market_hours
 
 

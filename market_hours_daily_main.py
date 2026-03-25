@@ -483,14 +483,15 @@ def run_full_refresh(
 
 
 def write_failed_prediction_record(exc: Exception) -> None:
-    target_timestamp = next_target_timestamp_utc().isoformat()
+    target_timestamp = next_target_timestamp_utc()
     failure_record = {
         "status": "failed",
         "generated_at": pd.Timestamp.utcnow().isoformat(),
         "registered_model_name": resolve_market_hours_daily_registered_model_name(),
         "symbol": tournament.SYMBOL,
         "timeframe": tournament.TIMEFRAME,
-        "target_candle_timestamp": target_timestamp,
+        "reference_candle_timestamp": (target_timestamp - pd.Timedelta(hours=1)).isoformat(),
+        "target_candle_timestamp": target_timestamp.isoformat(),
         "error": str(exc),
         "workflow_name": MARKET_HOURS_DAILY_WORKFLOW_NAME,
         "workflow_variant": MARKET_HOURS_DAILY_WORKFLOW_VARIANT,
