@@ -1,0 +1,174 @@
+name: BTC Market Hours Daily Refresh + Hourly Predictions
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tournament:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      PYTHONUNBUFFERED: "1"
+      DAGSHUB_OWNER: ${{ secrets.DAGSHUB_OWNER }}
+      DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      MLFLOW_MODEL_NAME: ${{ secrets.MLFLOW_MODEL_NAME }}
+      MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME: ${{ secrets.MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        run: |
+          test -n "$MLFLOW_TRACKING_URI"
+          test -n "$MLFLOW_TRACKING_USERNAME"
+          test -n "$MLFLOW_TRACKING_PASSWORD"
+
+      - name: Validate previous market-hours daily prediction and refresh dashboard
+        run: python validate_dashboard_market_hours_daily.py
+
+      - name: Decide whether to run this hour
+        id: hourly_gate
+        shell: bash
+        run: |
+          allow_window=$(python - <<'PY'
+          import pandas as pd
+          from zoneinfo import ZoneInfo
+          now = pd.Timestamp.now(tz="UTC")
+          target = now.floor("h") + pd.Timedelta(hours=1)
+          target_et = target.tz_convert(ZoneInfo("America/New_York"))
+          print("true" if 8 <= target_et.hour <= 20 else "false")
+          PY
+          )
+          echo "allow_window=$allow_window"
+          if [ "$allow_window" != "true" ]; then
+            echo "run_tournament=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run_tournament=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          expected_target=$(python -c "from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); target=now.replace(minute=0, second=0, microsecond=0)+timedelta(hours=1); print(target.isoformat())")
+          saved_target=$(python -c "import json; from pathlib import Path; path=Path('last_prediction_market_hours_daily.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('target_candle_timestamp',''))")
+          saved_status=$(python -c "import json; from pathlib import Path; path=Path('last_prediction_market_hours_daily.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('status',''))")
+
+          echo "expected_target=$expected_target"
+          echo "saved_target=$saved_target"
+          echo "saved_status=$saved_status"
+
+          if [ -n "$saved_target" ] && [ "$saved_target" = "$expected_target" ] && [ "$saved_status" = "success" ]; then
+            echo "run_tournament=false" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run already exists for this market-hours daily target candle. Skipping pipeline."
+          else
+            echo "run_tournament=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit market-hours daily dashboard artifacts
+        if: always() && steps.hourly_gate.outputs.run_tournament != 'true'
+        run: |
+          if [ -f history_market_hours_daily.csv ] || [ -f assets/dashboard_market_hours_daily.png ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            [ -f history_market_hours_daily.csv ] && git add history_market_hours_daily.csv
+            [ -f assets/dashboard_market_hours_daily.png ] && git add assets/dashboard_market_hours_daily.png
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -m "BTC market-hours daily dash [skip ci]"
+              success=false
+              for attempt in 1 2 3 4 5; do
+                echo "Artifact push attempt $attempt (merge strategy)"
+                if git pull --no-rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                echo "Artifact push attempt $attempt (rebase fallback)"
+                if git pull --rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                sleep 2
+              done
+              if [ "$success" != "true" ]; then
+                echo "Failed to push market-hours daily dashboard artifacts after 5 attempts."
+                exit 1
+              fi
+            fi
+          fi
+
+      - name: Run market-hours daily refresh or hourly prediction
+        id: tournament
+        continue-on-error: true
+        if: steps.hourly_gate.outputs.run_tournament == 'true'
+        run: python market_hours_daily_main.py
+
+      - name: Refresh market-hours daily dashboard with latest next prediction
+        if: always() && steps.hourly_gate.outputs.run_tournament == 'true'
+        run: python validate_dashboard_market_hours_daily.py
+
+      - name: Commit latest market-hours daily prediction metadata
+        if: always()
+        run: |
+          if [ -f last_prediction_market_hours_daily.json ] || [ -f history_market_hours_daily.csv ] || [ -f assets/dashboard_market_hours_daily.png ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            [ -f last_prediction_market_hours_daily.json ] && git add last_prediction_market_hours_daily.json
+            [ -f history_market_hours_daily.csv ] && git add history_market_hours_daily.csv
+            [ -f assets/dashboard_market_hours_daily.png ] && git add assets/dashboard_market_hours_daily.png
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -m "BTC market-hours daily artifacts [skip ci]"
+              success=false
+              for attempt in 1 2 3 4 5; do
+                echo "Artifact push attempt $attempt (merge strategy)"
+                if git pull --no-rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                echo "Artifact push attempt $attempt (rebase fallback)"
+                if git pull --rebase origin main && git push origin HEAD:main; then
+                  success=true
+                  break
+                fi
+                git merge --abort || true
+                git rebase --abort || true
+                sleep 2
+              done
+              if [ "$success" != "true" ]; then
+                echo "Failed to push market-hours daily prediction artifacts after 5 attempts."
+                exit 1
+              fi
+            fi
+          fi
+
+      - name: Fail job if prediction pipeline failed
+        if: steps.hourly_gate.outputs.run_tournament == 'true' && steps.tournament.outcome == 'failure'
+        run: exit 1
