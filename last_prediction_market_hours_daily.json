@@ -1,0 +1,14 @@
+{
+  "status": "failed",
+  "generated_at": "2026-03-25T19:30:53.414313+00:00",
+  "registered_model_name": "btc-dir-market-hours-daily",
+  "symbol": "BTC/USDT",
+  "timeframe": "1h",
+  "target_candle_timestamp": "2026-03-25T20:00:00+00:00",
+  "error": "[Errno 22] Invalid argument",
+  "workflow_name": "market-hours-daily",
+  "workflow_variant": "daily_refresh_7am_7pm_et_hourly_predict_8am_8pm_et",
+  "daily_model_refresh": false,
+  "model_refresh_et_date": "2026-03-25",
+  "prediction_generated_at": "2026-03-25T19:30:53.414377+00:00"
+}
