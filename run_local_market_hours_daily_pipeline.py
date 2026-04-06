@@ -23,6 +23,7 @@ LAST_PREDICTION_PATH = ROOT / "last_prediction_market_hours_daily.json"
 ARTIFACT_FILES = [
     ROOT / "history_market_hours_daily.csv",
     ROOT / "assets" / "dashboard_market_hours_daily.png",
+    ROOT / "assets" / "dashboard_market_hours_daily_reverse.png",
     ROOT / "last_prediction_market_hours_daily.json",
 ]
 NON_BLOCKING_LOCAL_FILES = [

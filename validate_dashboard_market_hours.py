@@ -16,6 +16,23 @@ from market_hours_common import is_allowed_prediction_target_timestamp
 dashboard.HISTORY_PATH = Path("history_market_hours.csv")
 dashboard.DASHBOARD_PATH = Path("assets/dashboard_market_hours.png")
 dashboard.LOCAL_LAST_PREDICTION_PATH = Path("last_prediction_market_hours.json")
+dashboard.DASHBOARD_TITLE = "BTC Market Hours Validation Dashboard"
+dashboard.DASHBOARD_VARIANTS = [
+    {
+        "path": Path("assets/dashboard_market_hours.png"),
+        "title": "BTC Market Hours Validation Dashboard",
+        "subtitle": "",
+        "signal_mode": "normal",
+        "filter_mode": "market_hours",
+    },
+    {
+        "path": Path("assets/dashboard_market_hours_reverse.png"),
+        "title": "BTC Reverse Market Hours Dashboard",
+        "subtitle": "Reverse actions from the same market-hours predictions",
+        "signal_mode": "reverse",
+        "filter_mode": "market_hours",
+    },
+]
 ORIGINAL_LOAD_LAST_PREDICTION = dashboard.load_last_prediction
 
 

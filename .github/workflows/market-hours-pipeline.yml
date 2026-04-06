@@ -96,6 +96,7 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             [ -f history_market_hours.csv ] && git add history_market_hours.csv
             [ -f assets/dashboard_market_hours.png ] && git add assets/dashboard_market_hours.png
+            [ -f assets/dashboard_market_hours_reverse.png ] && git add assets/dashboard_market_hours_reverse.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "BTC market-hours dash [skip ci]"
               success=false
@@ -142,6 +143,7 @@ jobs:
             [ -f last_prediction_market_hours.json ] && git add last_prediction_market_hours.json
             [ -f history_market_hours.csv ] && git add history_market_hours.csv
             [ -f assets/dashboard_market_hours.png ] && git add assets/dashboard_market_hours.png
+            [ -f assets/dashboard_market_hours_reverse.png ] && git add assets/dashboard_market_hours_reverse.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "BTC market-hours artifacts [skip ci]"
               success=false

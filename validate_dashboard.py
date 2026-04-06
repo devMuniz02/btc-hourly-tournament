@@ -19,11 +19,44 @@ import pandas as pd
 from mlflow import MlflowClient
 
 import main as tournament
+from market_hours_common import is_allowed_prediction_target_timestamp
 
 
 HISTORY_PATH = Path("history.csv")
 DASHBOARD_PATH = Path("assets/dashboard.png")
 LOCAL_LAST_PREDICTION_PATH = Path("last_prediction.json")
+DASHBOARD_TITLE = "BTC Directional Bot Validation Dashboard"
+DASHBOARD_SUBTITLE = ""
+DASHBOARD_VARIANTS = [
+    {
+        "path": DASHBOARD_PATH,
+        "title": DASHBOARD_TITLE,
+        "subtitle": DASHBOARD_SUBTITLE,
+        "signal_mode": "normal",
+        "filter_mode": "all",
+    },
+    {
+        "path": Path("assets/dashboard_reverse.png"),
+        "title": "BTC Directional Bot Reverse Dashboard",
+        "subtitle": "Reverse actions from the same hourly predictions",
+        "signal_mode": "reverse",
+        "filter_mode": "all",
+    },
+    {
+        "path": Path("assets/dashboard_market_hours_from_24h.png"),
+        "title": "BTC Directional Bot Market Hours Dashboard",
+        "subtitle": "Filtered to ET market-hours target candles only",
+        "signal_mode": "normal",
+        "filter_mode": "market_hours",
+    },
+    {
+        "path": Path("assets/dashboard_market_hours_from_24h_reverse.png"),
+        "title": "BTC Directional Bot Reverse Market Hours Dashboard",
+        "subtitle": "Reverse actions filtered to ET market-hours target candles",
+        "signal_mode": "reverse",
+        "filter_mode": "market_hours",
+    },
+]
 EASTERN_TZ = ZoneInfo("America/New_York")
 HISTORY_COLUMNS = [
     "timestamp",
@@ -425,7 +458,7 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
                 continue
             continue
 
-        predicted_label = int(predicted_value)
+        predicted_label = int(float(predicted_value))
         result = int(predicted_label == actual_label)
 
         current_result = row["result"]
@@ -440,8 +473,176 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
     return updated
 
 
+def normalize_prediction_timestamp(value: Any) -> pd.Timestamp | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    timestamp = pd.Timestamp(text)
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
+
+
+def should_include_market_hours_timestamp(value: Any) -> bool:
+    timestamp = normalize_prediction_timestamp(value)
+    if timestamp is None:
+        return False
+    return is_allowed_prediction_target_timestamp(timestamp)
+
+
+def filter_history_for_market_hours(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history.copy()
+    filtered = history[
+        history["timestamp"].apply(should_include_market_hours_timestamp)
+    ].copy()
+    return filtered.sort_values("timestamp").reset_index(drop=True)
+
+
+def invert_binary_label(value: Any) -> Any:
+    if value is None or pd.isna(value):
+        return value
+    text = str(value).strip()
+    if not text or text.upper() == "FAILED":
+        return value
+    try:
+        numeric = int(float(text))
+    except ValueError:
+        return value
+    return 1 - numeric
+
+
+def invert_signal_text(value: Any) -> Any:
+    if value is None:
+        return value
+    text = str(value).strip()
+    if not text:
+        return value
+    upper = text.upper()
+    if "UP" in upper:
+        return "DOWN"
+    if "DOWN" in upper:
+        return "UP"
+    return value
+
+
+def transform_model_predictions_payload(
+    value: Any,
+    *,
+    reverse: bool,
+) -> str:
+    payloads = parse_model_predictions(value)
+    if not payloads:
+        if isinstance(value, str):
+            return value
+        return json.dumps({}, sort_keys=True)
+
+    transformed: dict[str, dict[str, Any]] = {}
+    for family, payload in payloads.items():
+        updated = dict(payload)
+        if reverse:
+            updated["predicted_label"] = invert_binary_label(updated.get("predicted_label"))
+            updated["predicted_signal"] = invert_signal_text(updated.get("predicted_signal"))
+            probability_up = pd.to_numeric(updated.get("probability_up"), errors="coerce")
+            if not pd.isna(probability_up):
+                updated["probability_up"] = float(1.0 - float(probability_up))
+        transformed[family] = updated
+    return json.dumps(transformed, sort_keys=True)
+
+
+def transform_prediction_record(
+    prediction_record: dict[str, Any] | None,
+    *,
+    reverse: bool,
+    market_hours_only: bool,
+) -> dict[str, Any] | None:
+    if prediction_record is None:
+        return None
+    target_timestamp = normalize_prediction_timestamp(
+        prediction_record.get("target_candle_timestamp")
+        or prediction_record.get("generated_at")
+    )
+    if market_hours_only and not should_include_market_hours_timestamp(target_timestamp):
+        return None
+
+    updated = dict(prediction_record)
+    if reverse:
+        updated["predicted_label"] = invert_binary_label(updated.get("predicted_label"))
+        updated["predicted_signal"] = invert_signal_text(updated.get("predicted_signal"))
+        probability_up = pd.to_numeric(updated.get("probability_up"), errors="coerce")
+        if not pd.isna(probability_up):
+            updated["probability_up"] = float(1.0 - float(probability_up))
+    updated["model_predictions"] = transform_model_predictions_payload(
+        updated.get("model_predictions"),
+        reverse=reverse,
+    )
+    return updated
+
+
+def transform_history_for_dashboard(
+    history: pd.DataFrame,
+    *,
+    reverse: bool,
+    market_hours_only: bool,
+) -> pd.DataFrame:
+    transformed = ensure_history_schema(history.copy())
+    if market_hours_only:
+        transformed = filter_history_for_market_hours(transformed)
+
+    if transformed.empty or not reverse:
+        return transformed
+
+    predicted_values = transformed["predicted"].copy()
+    failed_mask = pd.to_numeric(transformed["failed"], errors="coerce").fillna(0) == 1
+    missing_mask = transformed["status"].fillna("").astype(str).str.lower() == "missing"
+    reversible_mask = ~failed_mask & ~missing_mask
+
+    transformed.loc[reversible_mask, "predicted"] = predicted_values.loc[reversible_mask].apply(
+        invert_binary_label
+    )
+
+    actual_numeric = pd.to_numeric(transformed["actual"], errors="coerce")
+    predicted_numeric = pd.to_numeric(transformed["predicted"], errors="coerce")
+    reversible_result_mask = reversible_mask & actual_numeric.notna() & predicted_numeric.notna()
+    transformed.loc[reversible_result_mask, "result"] = (
+        predicted_numeric.loc[reversible_result_mask].astype(int)
+        == actual_numeric.loc[reversible_result_mask].astype(int)
+    ).astype(int)
+    transformed["model_predictions"] = transformed["model_predictions"].apply(
+        lambda value: transform_model_predictions_payload(value, reverse=True)
+    )
+    return transformed.sort_values("timestamp").reset_index(drop=True)
+
+
+def build_dashboard_variant_view(
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+    variant: dict[str, Any],
+) -> tuple[pd.DataFrame, dict[str, int], dict[str, Any] | None]:
+    market_hours_only = variant.get("filter_mode") == "market_hours"
+    reverse = variant.get("signal_mode") == "reverse"
+    variant_history = transform_history_for_dashboard(
+        history,
+        reverse=reverse,
+        market_hours_only=market_hours_only,
+    )
+    variant_prediction = transform_prediction_record(
+        prediction_record,
+        reverse=reverse,
+        market_hours_only=market_hours_only,
+    )
+    stats = compute_stats(variant_history)
+    return variant_history, stats, variant_prediction
+
+
 def format_dual_time(value: Any) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "--"
     timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp):
+        return "--"
     if timestamp.tzinfo is None:
         timestamp = timestamp.tz_localize("UTC")
     else:
@@ -495,6 +696,10 @@ def render_dashboard(
     history: pd.DataFrame,
     stats: dict[str, int],
     prediction_record: dict[str, Any] | None,
+    *,
+    dashboard_path: Path | None = None,
+    dashboard_title: str | None = None,
+    dashboard_subtitle: str | None = None,
 ) -> None:
     history = ensure_history_schema(history)
     model_families = get_model_order(history, prediction_record)
@@ -798,17 +1003,48 @@ def render_dashboard(
             pct = float(str(cell.get_text().get_text()).replace("%", ""))
             cell.set_text_props(color="#1b7f4a" if pct >= 50 else "#c44536", weight="bold", ha="center", va="center")
 
-    fig.suptitle("BTC Directional Bot Validation Dashboard", fontsize=18, weight="bold", color="#1f3c4d", y=0.98)
-    fig.text(0.5, 0.945, format_current_dual_time(), ha="center", va="center", fontsize=10.5, color="#5b5f66")
+    output_path = DASHBOARD_PATH if dashboard_path is None else dashboard_path
+    resolved_title = DASHBOARD_TITLE if dashboard_title is None else dashboard_title
+    resolved_subtitle = DASHBOARD_SUBTITLE if dashboard_subtitle is None else dashboard_subtitle
+
+    fig.suptitle(resolved_title, fontsize=18, weight="bold", color="#1f3c4d", y=0.98)
+    current_time_y = 0.945
+    if resolved_subtitle:
+        fig.text(0.5, 0.952, resolved_subtitle, ha="center", va="center", fontsize=10.5, color="#7a5c2e")
+        current_time_y = 0.93
+    fig.text(0.5, current_time_y, format_current_dual_time(), ha="center", va="center", fontsize=10.5, color="#5b5f66")
     fig.text(0.015, 0.02, "Green = UP / correct strength   Red = DOWN / misses   Gray = failed run", fontsize=10, color="#5b5f66")
     fig.subplots_adjust(left=0.04, right=0.985, top=0.88, bottom=0.08)
-    DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(DASHBOARD_PATH, dpi=160, bbox_inches="tight")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
+def render_dashboard_variants(
+    history: pd.DataFrame,
+    prediction_record: dict[str, Any] | None,
+) -> None:
+    for variant in DASHBOARD_VARIANTS:
+        variant_history, stats, variant_prediction = build_dashboard_variant_view(
+            history,
+            prediction_record,
+            variant,
+        )
+        render_dashboard(
+            variant_history,
+            stats,
+            variant_prediction,
+            dashboard_path=variant["path"],
+            dashboard_title=variant.get("title"),
+            dashboard_subtitle=variant.get("subtitle"),
+        )
+
+
 def main() -> None:
-    client, registered_model_name, experiment_name = configure_tracking()
+    try:
+        configure_tracking()
+    except Exception as exc:
+        print(f"Could not configure tracking. Continuing with dashboard refresh only: {exc}")
     prediction_record = load_last_prediction()
     history = ensure_recent_history_slots(load_history())
 
@@ -827,8 +1063,7 @@ def main() -> None:
         )
     )
     if prediction_record is None:
-        stats = compute_stats(history)
-        render_dashboard(history, stats, prediction_record)
+        render_dashboard_variants(history, prediction_record)
         print(
             "No local last_prediction.json found. "
             "Skipping validation and refreshing the dashboard with existing history only."
@@ -836,8 +1071,7 @@ def main() -> None:
         return
 
     if prediction_already_recorded(history, prediction_record):
-        stats = compute_stats(history)
-        render_dashboard(history, stats, prediction_record)
+        render_dashboard_variants(history, prediction_record)
         print(
             f"Prediction for {get_prediction_timestamp(prediction_record).isoformat()} "
             "is already recorded. Skipping duplicate validation."
@@ -874,8 +1108,7 @@ def main() -> None:
                 "prediction_generated_at": prediction_record.get("prediction_generated_at", ""),
             },
         )
-        stats = compute_stats(history)
-        render_dashboard(history, stats, prediction_record)
+        render_dashboard_variants(history, prediction_record)
         print(
             "Prediction run previously failed:",
             json.dumps(
@@ -889,14 +1122,12 @@ def main() -> None:
         return
 
     if candles is None:
-        stats = compute_stats(history)
-        render_dashboard(history, stats, prediction_record)
+        render_dashboard_variants(history, prediction_record)
         print("Could not fetch validation candles. Skipping validation for now.")
         return
     actual = resolve_actual_direction(candles, prediction_record)
     if actual is None:
-        stats = compute_stats(history)
-        render_dashboard(history, stats, prediction_record)
+        render_dashboard_variants(history, prediction_record)
         print("Target candle is not available yet. Dashboard refreshed without new validation row.")
         return
 
@@ -931,8 +1162,7 @@ def main() -> None:
             "prediction_generated_at": prediction_record.get("prediction_generated_at", ""),
         },
     )
-    stats = compute_stats(history)
-    render_dashboard(history, stats, prediction_record)
+    render_dashboard_variants(history, prediction_record)
 
     print(
         "Validation complete:",

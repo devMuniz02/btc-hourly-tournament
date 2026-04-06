@@ -81,6 +81,9 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             [ -f history_daily.csv ] && git add history_daily.csv
             [ -f assets/dailydashboard.png ] && git add assets/dailydashboard.png
+            [ -f assets/dailydashboard_reverse.png ] && git add assets/dailydashboard_reverse.png
+            [ -f assets/dailydashboard_market_hours.png ] && git add assets/dailydashboard_market_hours.png
+            [ -f assets/dailydashboard_market_hours_reverse.png ] && git add assets/dailydashboard_market_hours_reverse.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "BTC daily dash [skip ci]"
               success=false
@@ -127,6 +130,9 @@ jobs:
             [ -f last_prediction_daily.json ] && git add last_prediction_daily.json
             [ -f history_daily.csv ] && git add history_daily.csv
             [ -f assets/dailydashboard.png ] && git add assets/dailydashboard.png
+            [ -f assets/dailydashboard_reverse.png ] && git add assets/dailydashboard_reverse.png
+            [ -f assets/dailydashboard_market_hours.png ] && git add assets/dailydashboard_market_hours.png
+            [ -f assets/dailydashboard_market_hours_reverse.png ] && git add assets/dailydashboard_market_hours_reverse.png
             if [ -n "$(git status --porcelain)" ]; then
               git commit -m "BTC daily artifacts [skip ci]"
               success=false
