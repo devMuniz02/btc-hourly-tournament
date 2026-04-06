@@ -94,33 +94,45 @@ jobs:
           if [ -f history_market_hours_daily.csv ] || [ -f assets/dashboard_market_hours_daily.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            [ -f history_market_hours_daily.csv ] && git add history_market_hours_daily.csv
-            [ -f assets/dashboard_market_hours_daily.png ] && git add assets/dashboard_market_hours_daily.png
-            [ -f assets/dashboard_market_hours_daily_reverse.png ] && git add assets/dashboard_market_hours_daily_reverse.png
-            if [ -n "$(git status --porcelain)" ]; then
-              git commit -m "BTC market-hours daily dash [skip ci]"
-              success=false
-              for attempt in 1 2 3 4 5; do
-                echo "Artifact push attempt $attempt (merge strategy)"
-                if git pull --no-rebase origin main && git push origin HEAD:main; then
-                  success=true
-                  break
-                fi
-                git merge --abort || true
-                git rebase --abort || true
-                echo "Artifact push attempt $attempt (rebase fallback)"
-                if git pull --rebase origin main && git push origin HEAD:main; then
-                  success=true
-                  break
-                fi
-                git merge --abort || true
-                git rebase --abort || true
-                sleep 2
-              done
-              if [ "$success" != "true" ]; then
-                echo "Failed to push market-hours daily dashboard artifacts after 5 attempts."
-                exit 1
+            tmpdir=$(mktemp -d)
+            tracked_files=(
+              history_market_hours_daily.csv
+              assets/dashboard_market_hours_daily.png
+              assets/dashboard_market_hours_daily_reverse.png
+            )
+            for file in "${tracked_files[@]}"; do
+              if [ -f "$file" ]; then
+                mkdir -p "$tmpdir/$(dirname "$file")"
+                cp "$file" "$tmpdir/$file"
               fi
+            done
+            success=false
+            for attempt in 1 2 3 4 5; do
+              echo "Artifact push attempt $attempt (reset-and-reapply)"
+              git fetch origin main
+              git reset --hard origin/main
+              for file in "${tracked_files[@]}"; do
+                if [ -f "$tmpdir/$file" ]; then
+                  mkdir -p "$(dirname "$file")"
+                  cp "$tmpdir/$file" "$file"
+                fi
+              done
+              git add -- "${tracked_files[@]}"
+              if [ -z "$(git status --porcelain)" ]; then
+                success=true
+                break
+              fi
+              git commit -m "BTC market-hours daily dash [skip ci]"
+              if git push origin HEAD:main; then
+                success=true
+                break
+              fi
+              sleep 2
+            done
+            rm -rf "$tmpdir"
+            if [ "$success" != "true" ]; then
+              echo "Failed to push market-hours daily dashboard artifacts after 5 attempts."
+              exit 1
             fi
           fi
 
@@ -140,34 +152,46 @@ jobs:
           if [ -f last_prediction_market_hours_daily.json ] || [ -f history_market_hours_daily.csv ] || [ -f assets/dashboard_market_hours_daily.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            [ -f last_prediction_market_hours_daily.json ] && git add last_prediction_market_hours_daily.json
-            [ -f history_market_hours_daily.csv ] && git add history_market_hours_daily.csv
-            [ -f assets/dashboard_market_hours_daily.png ] && git add assets/dashboard_market_hours_daily.png
-            [ -f assets/dashboard_market_hours_daily_reverse.png ] && git add assets/dashboard_market_hours_daily_reverse.png
-            if [ -n "$(git status --porcelain)" ]; then
-              git commit -m "BTC market-hours daily artifacts [skip ci]"
-              success=false
-              for attempt in 1 2 3 4 5; do
-                echo "Artifact push attempt $attempt (merge strategy)"
-                if git pull --no-rebase origin main && git push origin HEAD:main; then
-                  success=true
-                  break
-                fi
-                git merge --abort || true
-                git rebase --abort || true
-                echo "Artifact push attempt $attempt (rebase fallback)"
-                if git pull --rebase origin main && git push origin HEAD:main; then
-                  success=true
-                  break
-                fi
-                git merge --abort || true
-                git rebase --abort || true
-                sleep 2
-              done
-              if [ "$success" != "true" ]; then
-                echo "Failed to push market-hours daily prediction artifacts after 5 attempts."
-                exit 1
+            tmpdir=$(mktemp -d)
+            tracked_files=(
+              last_prediction_market_hours_daily.json
+              history_market_hours_daily.csv
+              assets/dashboard_market_hours_daily.png
+              assets/dashboard_market_hours_daily_reverse.png
+            )
+            for file in "${tracked_files[@]}"; do
+              if [ -f "$file" ]; then
+                mkdir -p "$tmpdir/$(dirname "$file")"
+                cp "$file" "$tmpdir/$file"
               fi
+            done
+            success=false
+            for attempt in 1 2 3 4 5; do
+              echo "Artifact push attempt $attempt (reset-and-reapply)"
+              git fetch origin main
+              git reset --hard origin/main
+              for file in "${tracked_files[@]}"; do
+                if [ -f "$tmpdir/$file" ]; then
+                  mkdir -p "$(dirname "$file")"
+                  cp "$tmpdir/$file" "$file"
+                fi
+              done
+              git add -- "${tracked_files[@]}"
+              if [ -z "$(git status --porcelain)" ]; then
+                success=true
+                break
+              fi
+              git commit -m "BTC market-hours daily artifacts [skip ci]"
+              if git push origin HEAD:main; then
+                success=true
+                break
+              fi
+              sleep 2
+            done
+            rm -rf "$tmpdir"
+            if [ "$success" != "true" ]; then
+              echo "Failed to push market-hours daily prediction artifacts after 5 attempts."
+              exit 1
             fi
           fi
 
