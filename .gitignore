@@ -138,3 +138,22 @@ bestcombination.ipynb
 getmark.ipynb
 fix.txt
 prompt.txt
+
+# Local-only workspace files not present on origin/main
+.venv_codex/
+btc_history.csv
+create_gif.py
+generate_comparisons.py
+local_market_hours_daily_pipeline_run.txt
+local_market_hours_pipeline_run.txt
+local_pipeline_run.txt
+main_hourly_24h_runtime.py
+polymarket-prediction.zip
+polymarket_btc_hourly_collector.py
+scripts/find_missing_btc_hours.py
+scripts/redeem_closed_positions.py
+temp/
+tests/__init__.py
+tests/test_hourly_24h_trader.py
+trading bot/
+trading-simulator.html

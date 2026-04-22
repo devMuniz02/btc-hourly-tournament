@@ -2,10 +2,13 @@ ipykernel
 requests
 pandas
 py-clob-client
+py-builder-relayer-client
+python-dotenv
+web3
 streamlit
 plotly
 matplotlib
-scikit-learn
+scikit-learn==1.8.0
 ccxt
 xgboost
 torch
