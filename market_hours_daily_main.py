@@ -205,6 +205,7 @@ def load_registered_champions(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
+    champion_download_root: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
     active_results_by_family: dict[str, dict[str, Any]] = {}
     missing_families: list[str] = []
@@ -214,10 +215,14 @@ def load_registered_champions(
             registered_model_name,
             family,
         )
+        family_download_root = (
+            champion_download_root / family if champion_download_root is not None else None
+        )
         champion_candidate, champion_meta = tournament.get_current_champion(
             client,
             family_registered_model_name,
             alias=tournament.CHAMPION_ALIAS,
+            download_root=family_download_root,
         )
         if champion_candidate is None or champion_meta is None:
             missing_families.append(family)
@@ -247,6 +252,7 @@ def run_prediction_only(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
+    champion_download_root: Path | None = None,
 ) -> None:
     tournament.log_step("Load registered family champions for ET market-hours prediction")
     active_results_by_family = load_registered_champions(
@@ -255,6 +261,7 @@ def run_prediction_only(
         train_df,
         valid_df,
         future_row,
+        champion_download_root=champion_download_root,
     )
     active_result = sorted(active_results_by_family.values(), key=tournament.ranking_key)[0]
     write_prediction_record(
@@ -274,7 +281,8 @@ def run_full_refresh(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
-) -> None:
+    champion_download_root: Path | None = None,
+) -> dict[str, dict[str, Any]]:
     validation_start = valid_df["timestamp"].iloc[0].isoformat()
     validation_end = valid_df["timestamp"].iloc[-1].isoformat()
 
@@ -314,11 +322,15 @@ def run_full_refresh(
             registered_model_name,
             family,
         )
+        family_download_root = (
+            champion_download_root / family if champion_download_root is not None else None
+        )
         if not args.reset_champion_from_challenger:
             champion_candidate, champion_meta = tournament.get_current_champion(
                 client,
                 family_registered_model_name,
                 alias=tournament.CHAMPION_ALIAS,
+                download_root=family_download_root,
             )
             if champion_candidate is not None and champion_meta is not None:
                 champion_result = tournament.evaluate_champion(
@@ -393,7 +405,8 @@ def run_full_refresh(
                 )
             elif decision["null_model_block"] and champion_result is None:
                 print(
-                    f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
+                    f"Bootstrapping missing {decision['registered_model_name']} because no incumbent champion exists. "
+                    "The null-model guard only blocks replacing an existing champion: "
                     f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
                 )
 
@@ -409,6 +422,18 @@ def run_full_refresh(
                 )
                 decision["active_result"]["registry_version"] = new_version
                 decision["active_result"]["source"] = "champion"
+                if champion_download_root is not None:
+                    family_download_root = champion_download_root / str(decision["family"])
+                    tournament.save_candidate_package(challenger_result["candidate"], family_download_root)
+                    version = client.get_model_version_by_alias(
+                        decision["registered_model_name"],
+                        tournament.CHAMPION_ALIAS,
+                    )
+                    tournament.write_champion_cache_metadata(
+                        family_download_root,
+                        version=str(version.version),
+                        run_id=str(version.run_id),
+                    )
                 print(
                     f"{challenger_result['name']} -> promoted to "
                     f"{decision['registered_model_name']} version {new_version}"
@@ -480,6 +505,7 @@ def run_full_refresh(
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
     print(f"Final signal: {active_result['next_signal']}")
+    return active_results_by_family
 
 
 def write_failed_prediction_record(exc: Exception) -> None:

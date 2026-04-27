@@ -237,7 +237,8 @@ def main() -> None:
                 )
             elif decision["null_model_block"] and champion_result is None:
                 print(
-                    f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
+                    f"Bootstrapping missing {decision['registered_model_name']} because no incumbent champion exists. "
+                    "The null-model guard only blocks replacing an existing champion: "
                     f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
                 )
 

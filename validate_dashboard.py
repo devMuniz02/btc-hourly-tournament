@@ -111,6 +111,16 @@ def build_history_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return ensure_history_schema(frame)
 
 
+def append_history_frame(history: pd.DataFrame, extra: pd.DataFrame) -> pd.DataFrame:
+    base_records = ensure_history_schema(history).to_dict("records")
+    extra_records = ensure_history_schema(extra).to_dict("records")
+    if not base_records:
+        return build_history_frame(extra_records)
+    if not extra_records:
+        return build_history_frame(base_records)
+    return build_history_frame([*base_records, *extra_records])
+
+
 def parse_model_predictions(value: Any) -> dict[str, dict[str, Any]]:
     if isinstance(value, dict):
         return value
@@ -268,7 +278,7 @@ def upsert_history_row(history: pd.DataFrame, row: dict[str, Any]) -> pd.DataFra
     if updated.empty:
         updated = row_frame
     else:
-        updated = pd.concat([updated, row_frame], ignore_index=True)
+        updated = append_history_frame(updated, row_frame)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated
@@ -341,7 +351,7 @@ def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.Da
     if updated.empty:
         updated = missing_frame
     else:
-        updated = pd.concat([ensure_history_schema(updated), missing_frame], ignore_index=True)
+        updated = append_history_frame(updated, missing_frame)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(HISTORY_PATH, index=False)
     return updated

@@ -52,6 +52,7 @@ ARTIFACT_SUBDIR = "packaged_model"
 MODEL_ARTIFACT_NAME = "model"
 LAST_PREDICTION_PATH = Path("last_prediction.json")
 CHAMPION_ALIAS = "champion"
+CHAMPION_CACHE_METADATA_FILENAME = "_champion_cache.json"
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
     ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
@@ -1052,6 +1053,31 @@ def resolve_candidate_package_dir(model_root: str | Path) -> Path:
     )
 
 
+def read_champion_cache_metadata(download_root: str | Path) -> dict[str, str] | None:
+    metadata_path = Path(download_root) / CHAMPION_CACHE_METADATA_FILENAME
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    version = payload.get("version")
+    run_id = payload.get("run_id")
+    if not version or not run_id:
+        return None
+    return {"version": str(version), "run_id": str(run_id)}
+
+
+def write_champion_cache_metadata(download_root: str | Path, *, version: str, run_id: str) -> None:
+    metadata_path = Path(download_root) / CHAMPION_CACHE_METADATA_FILENAME
+    metadata_path.write_text(
+        json.dumps({"version": str(version), "run_id": str(run_id)}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def download_model_root(version: Any, dst_path: str) -> str:
     artifact_uris = [
         getattr(version, "source", None),
@@ -1110,26 +1136,62 @@ def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
     alias: str = CHAMPION_ALIAS,
+    download_root: str | Path | None = None,
 ) -> tuple[TournamentCandidate | None, dict[str, str] | None]:
-    log_step(f"Load current champion from MLflow ({alias})")
     try:
         version = client.get_model_version_by_alias(registered_model_name, alias)
     except Exception:
         return None, None
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    if download_root is None:
+        temp_context = tempfile.TemporaryDirectory()
+        temp_dir_obj = temp_context.__enter__()
+    else:
+        temp_context = None
+        temp_dir_obj = Path(download_root)
+        temp_dir_obj.mkdir(parents=True, exist_ok=True)
+
+    try:
         try:
-            local_model_root = download_model_root(version, temp_dir)
+            if download_root is not None:
+                cached_metadata = read_champion_cache_metadata(temp_dir_obj)
+                if (
+                    cached_metadata is not None
+                    and cached_metadata.get("version") == str(version.version)
+                    and cached_metadata.get("run_id") == str(version.run_id)
+                ):
+                    package_dir = resolve_candidate_package_dir(temp_dir_obj)
+                    candidate = load_candidate_package(package_dir)
+                    metadata = {
+                        "version": version.version,
+                        "run_id": version.run_id,
+                        "download_root": str(temp_dir_obj),
+                    }
+                    return candidate, metadata
+
+            log_step(f"Load current champion from MLflow ({alias})")
+            local_model_root = download_model_root(version, str(temp_dir_obj))
             package_dir = resolve_candidate_package_dir(local_model_root)
             candidate = load_candidate_package(package_dir)
+            if download_root is not None:
+                write_champion_cache_metadata(
+                    temp_dir_obj,
+                    version=str(version.version),
+                    run_id=str(version.run_id),
+                )
         except Exception as exc:
             print(
                 "Champion alias exists but its artifacts could not be loaded. "
                 f"Proceeding without champion. Last error: {exc}"
             )
             return None, None
-    metadata = {"version": version.version, "run_id": version.run_id}
-    return candidate, metadata
+        metadata = {"version": version.version, "run_id": version.run_id}
+        if download_root is not None:
+            metadata["download_root"] = str(temp_dir_obj)
+        return candidate, metadata
+    finally:
+        if temp_context is not None:
+            temp_context.__exit__(None, None, None)
 
 
 def evaluate_champion(
@@ -1553,7 +1615,8 @@ def main() -> None:
                 )
             elif decision["null_model_block"] and champion_result is None:
                 print(
-                    f"Bootstrapping missing {decision['registered_model_name']} despite null-model guard: "
+                    f"Bootstrapping missing {decision['registered_model_name']} because no incumbent champion exists. "
+                    "The null-model guard only blocks replacing an existing champion: "
                     f"F1={challenger_result['f1']:.3f}, Accuracy={challenger_result['accuracy']:.3f}"
                 )
 
