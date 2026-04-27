@@ -112,5 +112,7 @@
   "reference_close": 77015.85,
   "price_to_beat": 76858.8,
   "symbol": "BTC/USDT",
-  "timeframe": "1h"
+  "timeframe": "1h",
+  "workflow_name": "hourly24",
+  "workflow_variant": "hourly_24h_prediction"
 }
