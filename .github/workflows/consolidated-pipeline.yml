@@ -95,7 +95,24 @@ jobs:
                 cp "$tmpdir/$file" "$file"
               fi
             done
-            git add -- "${existing_files[@]}"
+            normal_files=()
+            force_files=()
+            for file in "${existing_files[@]}"; do
+              case "$file" in
+                *.log)
+                  force_files+=("$file")
+                  ;;
+                *)
+                  normal_files+=("$file")
+                  ;;
+              esac
+            done
+            if [ "${#normal_files[@]}" -gt 0 ]; then
+              git add -- "${normal_files[@]}"
+            fi
+            if [ "${#force_files[@]}" -gt 0 ]; then
+              git add -f -- "${force_files[@]}"
+            fi
             if [ -z "$(git status --porcelain)" ]; then
               success=true
               break
