@@ -6,7 +6,7 @@ Train BTC challengers once, then compare and optionally promote across four isol
 from __future__ import annotations
 
 import argparse
-import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import sys
 import traceback
@@ -250,6 +250,85 @@ def build_skipped_track_record(track: config.TrackConfig, state: dict[str, Any])
     }
 
 
+def evaluate_track_family(
+    *,
+    args: argparse.Namespace,
+    track_id: str,
+    promotion_allowed: bool,
+    daily_model_refresh: bool,
+    track_registered_model_name: str,
+    family: str,
+    challenger_source: dict[str, Any],
+    train_df: pd.DataFrame,
+    valid_df: pd.DataFrame,
+    future_row: pd.DataFrame,
+) -> dict[str, Any]:
+    challenger_result = clone_result(challenger_source)
+    champion_result: dict[str, Any] | None = None
+    champion_meta: dict[str, str] | None = None
+    family_registered_model_name = tournament.registered_model_name_for_family(
+        track_registered_model_name,
+        family,
+    )
+
+    if not args.reset_champion_from_challenger or not promotion_allowed:
+        local_client = MlflowClient()
+        champion_candidate, champion_meta = tournament.get_current_champion(
+            local_client,
+            family_registered_model_name,
+            alias=tournament.CHAMPION_ALIAS,
+        )
+        if champion_candidate is not None and champion_meta is not None:
+            champion_result = tournament.evaluate_champion(
+                champion_candidate,
+                train_df,
+                valid_df,
+                future_row,
+            )
+            champion_result["registry_version"] = champion_meta["version"]
+
+    null_model_block = (
+        challenger_result["f1"] <= 0.5 or challenger_result["accuracy"] <= 0.5
+    )
+    challenger_beats_champion = champion_result is None or (
+        challenger_result["f1"] > champion_result["f1"]
+    )
+    deferred_due_to_schedule = (
+        not promotion_allowed
+        and champion_result is not None
+        and challenger_beats_champion
+    )
+
+    if promotion_allowed:
+        should_promote = champion_result is None or (
+            challenger_beats_champion and not null_model_block
+        )
+    else:
+        should_promote = False
+
+    if should_promote:
+        active_family_result = challenger_result
+    elif champion_result is not None:
+        active_family_result = champion_result
+    else:
+        active_family_result = challenger_result
+
+    return {
+        "family": family,
+        "track_id": track_id,
+        "registered_model_name": family_registered_model_name,
+        "promotion_allowed": bool(promotion_allowed),
+        "daily_model_refresh": bool(daily_model_refresh),
+        "promoted": bool(should_promote),
+        "promotion_blocked": bool(null_model_block and challenger_beats_champion),
+        "deferred_due_to_schedule": bool(deferred_due_to_schedule),
+        "challenger_result": challenger_result,
+        "champion_result": champion_result,
+        "champion_meta": champion_meta,
+        "active_result": active_family_result,
+    }
+
+
 def process_track(
     *,
     args: argparse.Namespace,
@@ -268,7 +347,6 @@ def process_track(
     all_results: list[dict[str, Any]] = [clone_result(result) for result in challenger_by_family.values()]
     family_decisions: list[dict[str, Any]] = []
     active_results_by_family: dict[str, dict[str, Any]] = {}
-    full_prediction_frame = pd.concat([full_labeled_df, future_row], ignore_index=True)
 
     with mlflow.start_run(run_name=f"btc-directional-consolidated-{track.id}", nested=True):
         mlflow.set_tags(
@@ -286,58 +364,41 @@ def process_track(
         if args.reset_champion_from_challenger:
             print(f"[{track.id}] Champion comparison disabled where promotion is allowed.")
 
+        parallel_results: dict[str, dict[str, Any]] = {}
+        max_workers = min(8, len(config.MODEL_FAMILIES))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(
+                    evaluate_track_family,
+                    args=args,
+                    track_id=track.id,
+                    promotion_allowed=bool(state["promotion_allowed"]),
+                    daily_model_refresh=bool(state["daily_model_refresh"]),
+                    track_registered_model_name=track_registered_model_name,
+                    family=family,
+                    challenger_source=challenger_by_family[family],
+                    train_df=train_df,
+                    valid_df=valid_df,
+                    future_row=future_row,
+                ): family
+                for family in config.MODEL_FAMILIES
+            }
+            for future in as_completed(future_map):
+                result = future.result()
+                parallel_results[result["family"]] = result
+
         for family in config.MODEL_FAMILIES:
-            challenger_result = clone_result(challenger_by_family[family])
-            champion_result: dict[str, Any] | None = None
-            champion_meta: dict[str, str] | None = None
-            family_registered_model_name = tournament.registered_model_name_for_family(
-                track_registered_model_name,
-                family,
-            )
+            decision = parallel_results[family]
+            challenger_result = decision["challenger_result"]
+            champion_result = decision["champion_result"]
+            champion_meta = decision["champion_meta"]
+            active_family_result = decision["active_result"]
+            family_registered_model_name = decision["registered_model_name"]
 
-            if not args.reset_champion_from_challenger or not state["promotion_allowed"]:
-                champion_candidate, champion_meta = tournament.get_current_champion(
-                    client,
-                    family_registered_model_name,
-                    alias=tournament.CHAMPION_ALIAS,
-                )
-                if champion_candidate is not None and champion_meta is not None:
-                    champion_result = tournament.evaluate_champion(
-                        champion_candidate,
-                        train_df,
-                        valid_df,
-                        future_row,
-                    )
-                    champion_result["registry_version"] = champion_meta["version"]
-                    all_results.append(champion_result)
+            if champion_result is not None:
+                all_results.append(champion_result)
 
-            null_model_block = (
-                challenger_result["f1"] <= 0.5 or challenger_result["accuracy"] <= 0.5
-            )
-            challenger_beats_champion = champion_result is None or (
-                challenger_result["f1"] > champion_result["f1"]
-            )
-            deferred_due_to_schedule = (
-                not state["promotion_allowed"]
-                and champion_result is not None
-                and challenger_beats_champion
-            )
-
-            if state["promotion_allowed"]:
-                should_promote = champion_result is None or (
-                    challenger_beats_champion and not null_model_block
-                )
-            else:
-                should_promote = False
-
-            if should_promote:
-                active_family_result = challenger_result
-            elif champion_result is not None:
-                active_family_result = champion_result
-            else:
-                active_family_result = challenger_result
-
-            if should_promote:
+            if decision["promoted"]:
                 new_version = tournament.promote_champion(
                     client=client,
                     registered_model_name=family_registered_model_name,
@@ -369,11 +430,11 @@ def process_track(
                 {
                     "family": family,
                     "registered_model_name": family_registered_model_name,
-                    "promotion_allowed": bool(state["promotion_allowed"]),
-                    "daily_model_refresh": bool(state["daily_model_refresh"]),
-                    "promoted": bool(should_promote),
-                    "promotion_blocked": bool(null_model_block and challenger_beats_champion),
-                    "deferred_due_to_schedule": bool(deferred_due_to_schedule),
+                    "promotion_allowed": bool(decision["promotion_allowed"]),
+                    "daily_model_refresh": bool(decision["daily_model_refresh"]),
+                    "promoted": bool(decision["promoted"]),
+                    "promotion_blocked": bool(decision["promotion_blocked"]),
+                    "deferred_due_to_schedule": bool(decision["deferred_due_to_schedule"]),
                     "challenger": serialize_result_optional(challenger_result),
                     "champion": serialize_result_optional(champion_result),
                     "active": serialize_result_optional(active_family_result),
