@@ -114,5 +114,6 @@
   "symbol": "BTC/USDT",
   "timeframe": "1h",
   "workflow_name": "hourly24",
-  "workflow_variant": "hourly_24h_prediction"
+  "workflow_variant": "hourly_24h_prediction",
+  "error": "name 'raw' is not defined"
 }

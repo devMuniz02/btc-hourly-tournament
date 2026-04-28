@@ -1,5 +1,5 @@
 timestamp,predicted,actual,result,failed,status,reference_open,reference_close,target_open,target_close,model_predictions,best_champion_name,best_champion_family,best_champion_version,workflow_name,workflow_variant,daily_model_refresh,model_refresh_et_date,prediction_generated_at
-2026-03-16 15:00:00+00:00,,0.0,,0.0,missing,74109.56,73565.54,73565.54,73274.76,,,,,,,,,
+2026-03-16 15:00:00+00:00,,0.0,,0.0,missing,74109.55,73565.54,73565.54,73274.76,,,,,,,,,
 2026-03-16 16:00:00+00:00,,DOWN,,0.0,missing,73565.54,73274.76,73274.76,73760.63,,,,,,,,,
 2026-03-16 17:00:00+00:00,1.0,UP,1.0,0.0,validated,73274.76,73760.63,73760.63,73943.18,,,,,,,,,
 2026-03-16 18:00:00+00:00,1.0,UP,1.0,0.0,validated,73760.63,73943.18,73943.18,73913.6,,,,,,,,,
@@ -1038,3 +1038,4 @@ timestamp,predicted,actual,result,failed,status,reference_open,reference_close,t
 2026-04-28 19:00:00+00:00,,UP,,0.0,missing,76187.3,76242.18,76242.18,76330.97,,,,,,,,,
 2026-04-28 20:00:00+00:00,,UP,,0.0,missing,76242.18,76330.97,76330.97,76463.95,,,,,,,,,
 2026-04-28 21:00:00+00:00,,1,,0.0,missing,76330.97,76463.95,76463.95,76357.15,,,,,,,,,
+2026-04-28 22:00:00+00:00,,,,0.0,missing,76463.95,76357.15,76357.15,76242.17,,,,,,,,,
