@@ -199,11 +199,27 @@ def fetch_validation_candles(
     return tournament.fetch_ohlcv(limit=lookback_hours, min_candles=min_candles)
 
 
+def get_resolved_hour_prices(
+    indexed: pd.DataFrame,
+    target_ts: pd.Timestamp,
+) -> tuple[float, float] | None:
+    reference_ts = target_ts - pd.Timedelta(hours=1)
+    prior_ts = target_ts - pd.Timedelta(hours=2)
+    if reference_ts not in indexed.index:
+        return None
+
+    resolved_close = float(indexed.loc[reference_ts, "close"])
+    if prior_ts in indexed.index:
+        resolved_open = float(indexed.loc[prior_ts, "close"])
+    else:
+        resolved_open = float(indexed.loc[reference_ts, "open"])
+    return resolved_open, resolved_close
+
+
 def resolve_actual_direction(
     candles: pd.DataFrame,
     prediction_record: dict[str, Any],
 ) -> tuple[int, pd.Timestamp, float, float, float] | None:
-    reference_ts = pd.Timestamp(prediction_record["reference_candle_timestamp"])
     target_ts = pd.Timestamp(prediction_record["target_candle_timestamp"])
     now_utc = pd.Timestamp.now(tz="UTC")
 
@@ -214,12 +230,12 @@ def resolve_actual_direction(
     candle_frame = candles.copy()
     candle_frame["timestamp"] = pd.to_datetime(candle_frame["timestamp"], utc=True)
     indexed = candle_frame.set_index("timestamp")
-    if reference_ts not in indexed.index or target_ts not in indexed.index:
+    resolved_prices = get_resolved_hour_prices(indexed, target_ts)
+    if resolved_prices is None:
         return None
 
-    reference_open = float(indexed.loc[reference_ts, "open"])
-    reference_close = float(indexed.loc[reference_ts, "close"])
-    target_open = float(indexed.loc[target_ts, "open"])
+    reference_open, reference_close = resolved_prices
+    target_open = reference_close
     actual_label = int(reference_close > reference_open)
     return actual_label, target_ts, reference_open, reference_close, target_open
 
@@ -416,22 +432,21 @@ def backfill_recent_history_prices(history: pd.DataFrame, candles: pd.DataFrame 
     changed = False
     for idx, row in updated.iterrows():
         target_ts = pd.Timestamp(row["timestamp"])
-        reference_ts = target_ts - pd.Timedelta(hours=1)
-        if reference_ts in indexed.index:
-            reference_open = float(indexed.loc[reference_ts, "open"])
-            reference_close = float(indexed.loc[reference_ts, "close"])
+        resolved_prices = get_resolved_hour_prices(indexed, target_ts)
+        if resolved_prices is not None:
+            reference_open, reference_close = resolved_prices
             if pd.isna(row["reference_open"]) or float(row["reference_open"]) != reference_open:
                 updated.at[idx, "reference_open"] = reference_open
                 changed = True
             if pd.isna(row["reference_close"]) or float(row["reference_close"]) != reference_close:
                 updated.at[idx, "reference_close"] = reference_close
                 changed = True
-        if target_ts in indexed.index:
-            target_open = float(indexed.loc[target_ts, "open"])
-            target_close = float(indexed.loc[target_ts, "close"])
+            target_open = reference_close
             if pd.isna(row["target_open"]) or float(row["target_open"]) != target_open:
                 updated.at[idx, "target_open"] = target_open
                 changed = True
+        if target_ts in indexed.index:
+            target_close = float(indexed.loc[target_ts, "close"])
             if pd.isna(row["target_close"]) or float(row["target_close"]) != target_close:
                 updated.at[idx, "target_close"] = target_close
                 changed = True
