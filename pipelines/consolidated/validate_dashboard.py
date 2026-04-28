@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 """
-Render dashboards for the consolidated BTC workflow from a single history CSV.
+Render consolidated dashboards using the shared workflow dashboard layout.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import pandas as pd
 
 import main as tournament
@@ -28,48 +25,249 @@ from pipelines.consolidated import config, io
 DASHBOARD_VARIANTS = (
     {
         "path": config.DASHBOARD_PATH,
-        "title": "BTC Consolidated Validation Dashboard",
-        "reverse": False,
-        "market_hours_only": False,
+        "title": "BTC Consolidated Hourly + Daily Dashboard",
+        "subtitle": "Combined view for hourly_24h and hourly_daily tracks",
+        "signal_mode": "normal",
+        "track_ids": ("hourly_24h", "hourly_daily"),
     },
     {
         "path": config.DASHBOARD_REVERSE_PATH,
-        "title": "BTC Consolidated Reverse Dashboard",
-        "reverse": True,
-        "market_hours_only": False,
+        "title": "BTC Consolidated Reverse Hourly + Daily Dashboard",
+        "subtitle": "Reverse actions for hourly_24h and hourly_daily tracks",
+        "signal_mode": "reverse",
+        "track_ids": ("hourly_24h", "hourly_daily"),
     },
     {
         "path": config.DASHBOARD_MARKET_HOURS_PATH,
         "title": "BTC Consolidated Market Hours Dashboard",
-        "reverse": False,
-        "market_hours_only": True,
+        "subtitle": "Combined view for market_hours and market_hours_daily tracks",
+        "signal_mode": "normal",
+        "track_ids": ("market_hours", "market_hours_daily"),
     },
     {
         "path": config.DASHBOARD_MARKET_HOURS_REVERSE_PATH,
-        "title": "BTC Consolidated Market Hours Reverse Dashboard",
-        "reverse": True,
-        "market_hours_only": True,
+        "title": "BTC Consolidated Reverse Market Hours Dashboard",
+        "subtitle": "Reverse actions for market_hours and market_hours_daily tracks",
+        "signal_mode": "reverse",
+        "track_ids": ("market_hours", "market_hours_daily"),
     },
 )
+
+_STANDARD_DASHBOARD: ModuleType | None = None
 
 
 def load_last_prediction() -> dict[str, Any] | None:
     return io.read_json(config.LAST_PREDICTION_PATH)
 
 
-def parse_model_predictions(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
+def load_standard_dashboard_module() -> ModuleType:
+    global _STANDARD_DASHBOARD
+    if _STANDARD_DASHBOARD is not None:
+        return _STANDARD_DASHBOARD
+
+    module_path = ROOT / "validate_dashboard.py"
+    spec = importlib.util.spec_from_file_location("shared_validate_dashboard", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load shared dashboard module from {module_path}.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.HISTORY_PATH = config.HISTORY_PATH
+    _STANDARD_DASHBOARD = module
+    return module
+
+
+def normalize_timestamp(value: Any) -> pd.Timestamp | None:
     if value is None:
-        return {}
+        return None
     text = str(value).strip()
-    if not text:
-        return {}
+    if not text or text.lower() == "nan":
+        return None
+    timestamp = pd.Timestamp(text)
+    if pd.isna(timestamp):
+        return None
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
+
+
+def coerce_numeric(value: Any) -> float | pd._libs.missing.NAType:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return pd.NA
+    return float(numeric)
+
+
+def coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes"}:
+        return True
+    if text in {"0", "false", "no", ""}:
+        return False
+    return bool(value)
+
+
+def signal_to_label(value: Any) -> int | str:
+    if value is None:
+        return ""
+    text = str(value).strip().upper()
+    if not text or text == "NAN":
+        return ""
+    if text == "UP":
+        return 1
+    if text == "DOWN":
+        return 0
+    numeric = pd.to_numeric(text, errors="coerce")
+    if pd.isna(numeric):
+        return ""
+    return int(float(numeric))
+
+
+def label_to_signal(value: Any) -> str:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        text = str(value).strip().upper()
+        if text in {"UP", "DOWN"}:
+            return text
+        return ""
+    return "UP" if int(float(numeric)) == 1 else "DOWN"
+
+
+def result_to_int(value: Any) -> int | str:
+    if value is None:
+        return ""
+    text = str(value).strip().upper()
+    if not text or text == "NAN":
+        return ""
+    if text == "WIN":
+        return 1
+    if text == "LOSS":
+        return 0
+    if text == "FAILED":
+        return 0
+    numeric = pd.to_numeric(text, errors="coerce")
+    if pd.isna(numeric):
+        return ""
+    return int(float(numeric))
+
+
+def result_to_text(value: Any) -> str:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return ""
+    return "WIN" if int(float(numeric)) == 1 else "LOSS"
+
+
+def build_standard_history(history: pd.DataFrame) -> pd.DataFrame:
+    dashboard = load_standard_dashboard_module()
+    source = io.ensure_history_schema(history)
+    rows: list[dict[str, Any]] = []
+    for _, row in source.iterrows():
+        timestamp = normalize_timestamp(row.get("target_candle_timestamp") or row.get("timestamp"))
+        if timestamp is None:
+            continue
+        status = str(row.get("status", "")).strip().lower()
+        failed = coerce_bool(row.get("failed")) or status == "failed"
+        rows.append(
+            {
+                "timestamp": timestamp,
+                "predicted": "FAILED" if failed else signal_to_label(row.get("predicted_signal")),
+                "actual": signal_to_label(row.get("actual")),
+                "result": result_to_int(row.get("result")),
+                "failed": 1 if failed else 0,
+                "status": "failed" if failed else ("missing" if status == "skipped" else "validated"),
+                "reference_open": coerce_numeric(row.get("reference_open")),
+                "reference_close": coerce_numeric(row.get("reference_close")),
+                "target_open": coerce_numeric(row.get("target_open")),
+                "target_close": coerce_numeric(row.get("target_close")),
+                "model_predictions": row.get("model_predictions", "{}"),
+                "best_champion_name": row.get("best_champion_name", ""),
+                "best_champion_family": row.get("best_champion_family", ""),
+                "best_champion_version": row.get("best_champion_version", ""),
+                "workflow_name": row.get("workflow_name", ""),
+                "workflow_variant": row.get("workflow_variant", ""),
+                "daily_model_refresh": coerce_bool(row.get("daily_model_refresh")),
+                "model_refresh_et_date": "",
+                "prediction_generated_at": row.get("prediction_generated_at", ""),
+            }
+        )
+    frame = pd.DataFrame(rows, columns=dashboard.HISTORY_COLUMNS)
+    return dashboard.ensure_history_schema(frame)
+
+
+def build_history_key(row: pd.Series) -> tuple[str, str, str]:
+    timestamp = normalize_timestamp(row.get("target_candle_timestamp") or row.get("timestamp"))
+    return (
+        "" if timestamp is None else timestamp.isoformat(),
+        str(row.get("workflow_name", "")),
+        str(row.get("workflow_variant", "")),
+    )
+
+
+def refresh_history_outcomes(history: pd.DataFrame) -> pd.DataFrame:
+    if history.empty:
+        return history
+
+    standard = load_standard_dashboard_module()
+    standard_history = build_standard_history(history)
+    standard_history = standard.normalize_history_labels(standard_history)
+
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        candles = fetch_validation_candles(history)
+    except Exception as exc:
+        print(f"Could not fetch validation candles. Continuing with stored history only: {exc}")
+        candles = None
+
+    if candles is not None:
+        standard_history = standard.normalize_history_labels(
+            standard.backfill_recent_history_prices(
+                standard_history,
+                candles,
+            )
+        )
+
+    updated = io.ensure_history_schema(history.copy())
+    updated["actual"] = updated["actual"].astype("object")
+    updated["result"] = updated["result"].astype("object")
+    standard_by_key = {
+        build_history_key(row): row
+        for _, row in standard_history.iterrows()
+    }
+    changed = False
+
+    for index, row in updated.iterrows():
+        standard_row = standard_by_key.get(build_history_key(row))
+        if standard_row is None:
+            continue
+
+        for column in ("reference_open", "reference_close", "target_open", "target_close"):
+            current_value = coerce_numeric(row.get(column))
+            new_value = coerce_numeric(standard_row.get(column))
+            if pd.isna(new_value):
+                continue
+            if pd.isna(current_value) or float(current_value) != float(new_value):
+                updated.at[index, column] = float(new_value)
+                changed = True
+
+        predicted_present = bool(str(row.get("predicted_signal", "")).strip()) or str(row.get("status", "")).strip().lower() == "success"
+        if not predicted_present:
+            continue
+
+        actual_signal = label_to_signal(standard_row.get("actual"))
+        if actual_signal and str(row.get("actual", "")).strip().upper() != actual_signal:
+            updated.at[index, "actual"] = actual_signal
+            changed = True
+
+        resolved_result = result_to_text(standard_row.get("result"))
+        if resolved_result and str(row.get("result", "")).strip().upper() != resolved_result:
+            updated.at[index, "result"] = resolved_result
+            changed = True
+
+    if changed:
+        config.HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        updated.to_csv(config.HISTORY_PATH, index=False)
+    return updated
 
 
 def fetch_validation_candles(history: pd.DataFrame) -> pd.DataFrame | None:
@@ -81,221 +279,136 @@ def fetch_validation_candles(history: pd.DataFrame) -> pd.DataFrame | None:
     ].copy()
     if unresolved.empty:
         return None
-    oldest_target = pd.Timestamp(unresolved["target_candle_timestamp"].min())
+    target_timestamps = unresolved["target_candle_timestamp"].apply(normalize_timestamp).dropna()
+    if target_timestamps.empty:
+        return None
+    oldest_target = min(target_timestamps)
     now_utc = pd.Timestamp.now(tz="UTC")
     lookback_hours = int(max((now_utc - oldest_target).total_seconds() // 3600 + 6, 48))
     lookback_hours = min(max(lookback_hours, 48), tournament.LOOKBACK_HOURS)
     return tournament.fetch_ohlcv(limit=lookback_hours, min_candles=min(lookback_hours, 5000))
 
 
-def resolve_actual(row: pd.Series, candles: pd.DataFrame) -> tuple[str, str, float, float] | None:
-    target_ts = pd.Timestamp(row["target_candle_timestamp"])
-    if pd.Timestamp.now(tz="UTC") < target_ts:
-        return None
-    indexed = candles.copy()
-    indexed["timestamp"] = pd.to_datetime(indexed["timestamp"], utc=True)
-    indexed = indexed.set_index("timestamp")
-    if target_ts not in indexed.index:
-        return None
-    target_open = float(indexed.loc[target_ts, "open"])
-    target_close = float(indexed.loc[target_ts, "close"])
-    actual = "UP" if target_close >= target_open else "DOWN"
-    predicted = str(row.get("predicted_signal", "")).strip().upper()
-    result = "WIN" if predicted == actual else "LOSS"
-    return actual, result, target_open, target_close
-
-
-def refresh_history_outcomes(history: pd.DataFrame) -> pd.DataFrame:
-    if history.empty:
-        return history
-    candles = fetch_validation_candles(history)
-    if candles is None:
-        return history
-
-    updated = history.copy()
-    for index, row in updated.iterrows():
-        if str(row.get("status", "")).strip().lower() != "success":
-            continue
-        if str(row.get("actual", "")).strip():
-            continue
-        resolved = resolve_actual(row, candles)
-        if resolved is None:
-            continue
-        actual, result, target_open, target_close = resolved
-        updated.at[index, "actual"] = actual
-        updated.at[index, "result"] = result
-        updated.at[index, "target_open"] = target_open
-        updated.at[index, "target_close"] = target_close
-
-    updated = io.ensure_history_schema(updated)
-    updated.to_csv(config.HISTORY_PATH, index=False)
-    return updated
-
-
-def reverse_signal(value: str) -> str:
-    upper = str(value).strip().upper()
-    if upper == "UP":
-        return "DOWN"
-    if upper == "DOWN":
-        return "UP"
-    return upper
-
-
-def filter_history(history: pd.DataFrame, *, market_hours_only: bool) -> pd.DataFrame:
-    filtered = history.copy()
-    filtered = filtered[filtered["status"] == "success"].copy()
-    if market_hours_only:
-        filtered = filtered[filtered["track"].isin(["market_hours", "market_hours_daily"])].copy()
-    return filtered
-
-
-def compute_plot_frame(history: pd.DataFrame, *, reverse: bool) -> pd.DataFrame:
-    frame = history.copy()
-    if frame.empty:
-        return frame
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
-    frame["predicted_for_plot"] = (
-        frame["predicted_signal"].apply(reverse_signal)
-        if reverse
-        else frame["predicted_signal"].astype(str).str.upper()
-    )
-    frame["is_resolved"] = frame["actual"].fillna("").astype(str).str.strip() != ""
-    frame["plot_result"] = frame.apply(
-        lambda row: (
-            "WIN"
-            if row["is_resolved"] and str(row["predicted_for_plot"]).upper() == str(row["actual"]).upper()
-            else ("LOSS" if row["is_resolved"] else "")
-        ),
-        axis=1,
-    )
-    frame["win_value"] = frame["plot_result"].map({"WIN": 1.0, "LOSS": 0.0}).fillna(pd.NA)
-    return frame.sort_values("timestamp")
-
-
-def render_dashboard(
+def filter_history_by_track_ids(
     history: pd.DataFrame,
+    track_ids: tuple[str, ...],
+) -> pd.DataFrame:
+    if history.empty:
+        return history.copy()
+    filtered = history[history["track"].isin(track_ids)].copy()
+    return filtered.sort_values(["timestamp", "track"]).reset_index(drop=True)
+
+
+def select_prediction_track(
     prediction_payload: dict[str, Any] | None,
     *,
-    path: Path,
-    title: str,
-    reverse: bool,
-    market_hours_only: bool,
+    track_ids: tuple[str, ...],
+) -> dict[str, Any] | None:
+    if prediction_payload is None:
+        return None
+    tracks = prediction_payload.get("tracks")
+    if not isinstance(tracks, dict):
+        return None
+
+    candidates: list[tuple[pd.Timestamp, int, dict[str, Any]]] = []
+    for order, track in enumerate(config.TRACKS):
+        if track.id not in track_ids:
+            continue
+        payload = tracks.get(track.id)
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            continue
+        record = payload.get("prediction_record")
+        if not isinstance(record, dict) or record.get("status") != "success":
+            continue
+        target_timestamp = normalize_timestamp(record.get("target_candle_timestamp"))
+        if target_timestamp is None:
+            continue
+        candidates.append((target_timestamp, -order, payload))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
+
+
+def build_standard_prediction_record(
+    prediction_payload: dict[str, Any] | None,
+    *,
+    track_ids: tuple[str, ...],
+) -> dict[str, Any] | None:
+    selected_track = select_prediction_track(
+        prediction_payload,
+        track_ids=track_ids,
+    )
+    if selected_track is None:
+        return None
+
+    record = dict(selected_track["prediction_record"])
+    return {
+        "status": record.get("status", "success"),
+        "generated_at": record.get("generated_at", prediction_payload.get("generated_at") if prediction_payload else ""),
+        "reference_candle_timestamp": record.get("reference_candle_timestamp"),
+        "target_candle_timestamp": record.get("target_candle_timestamp"),
+        "reference_open": record.get("reference_open"),
+        "reference_close": record.get("reference_close"),
+        "target_open": record.get("target_open"),
+        "target_close": record.get("target_close"),
+        "predicted_label": signal_to_label(record.get("predicted_signal")),
+        "predicted_signal": record.get("predicted_signal", ""),
+        "probability_up": record.get("probability_up"),
+        "model_accuracy": record.get("model_accuracy"),
+        "model_f1": record.get("model_f1"),
+        "model_predictions": record.get("model_predictions", {}),
+        "best_champion_name": record.get("best_champion_name", ""),
+        "best_champion_family": record.get("best_champion_family", ""),
+        "best_champion_version": record.get("best_champion_version", ""),
+        "workflow_name": record.get("workflow_name", config.WORKFLOW_NAME),
+        "workflow_variant": record.get("workflow_variant", config.WORKFLOW_VARIANT),
+        "daily_model_refresh": bool(record.get("daily_model_refresh", False)),
+        "model_refresh_et_date": "",
+        "prediction_generated_at": record.get("prediction_generated_at", record.get("generated_at", "")),
+    }
+
+
+def render_dashboard_variants(
+    history: pd.DataFrame,
+    prediction_payload: dict[str, Any] | None,
 ) -> None:
-    filtered = compute_plot_frame(
-        filter_history(history, market_hours_only=market_hours_only),
-        reverse=reverse,
-    )
+    standard = load_standard_dashboard_module()
+    standard_history = build_standard_history(history)
 
-    fig = plt.figure(figsize=(16, 10))
-    grid = fig.add_gridspec(2, 2, height_ratios=[2.0, 1.4], width_ratios=[1.7, 1.3])
-    ax_curve = fig.add_subplot(grid[0, 0])
-    ax_bar = fig.add_subplot(grid[0, 1])
-    ax_table = fig.add_subplot(grid[1, :])
-
-    fig.suptitle(title, fontsize=18, weight="bold")
-
-    if filtered.empty:
-        ax_curve.text(0.5, 0.5, "No consolidated prediction history yet", ha="center", va="center")
-        ax_curve.set_axis_off()
-        ax_bar.set_axis_off()
-        ax_table.set_axis_off()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-        fig.savefig(path, dpi=160)
-        plt.close(fig)
-        return
-
-    resolved = filtered[filtered["is_resolved"]].copy()
-    if not resolved.empty:
-        for track, group in resolved.groupby("track"):
-            curve = group.sort_values("timestamp").copy()
-            curve["cum_accuracy"] = curve["win_value"].astype(float).expanding().mean() * 100.0
-            ax_curve.plot(curve["timestamp"], curve["cum_accuracy"], marker="o", label=track)
-        ax_curve.set_ylabel("Cumulative accuracy (%)")
-        ax_curve.set_xlabel("Target timestamp (UTC)")
-        ax_curve.set_ylim(0, 100)
-        ax_curve.grid(alpha=0.25)
-        ax_curve.legend()
-    else:
-        ax_curve.text(0.5, 0.5, "Waiting for resolved predictions", ha="center", va="center")
-        ax_curve.set_axis_off()
-
-    recent = filtered.tail(16).copy()
-    ax_bar.bar(
-        range(len(recent)),
-        recent["probability_up"].astype(float),
-        color=["#2f855a" if s == "UP" else "#c53030" for s in recent["predicted_for_plot"]],
-    )
-    ax_bar.axhline(0.5, color="#555555", linestyle="--", linewidth=1)
-    ax_bar.set_ylim(0, 1)
-    ax_bar.set_title("Recent probability-up values")
-    ax_bar.set_xticks(range(len(recent)))
-    ax_bar.set_xticklabels(recent["track"], rotation=45, ha="right")
-
-    ax_table.axis("off")
-    latest_rows = filtered.tail(10).copy()
-    table_rows: list[list[str]] = []
-    for _, row in latest_rows.iterrows():
-        table_rows.append(
-            [
-                pd.Timestamp(row["timestamp"]).strftime("%m-%d %H:%M"),
-                str(row["track"]),
-                str(row["predicted_for_plot"]),
-                str(row.get("actual", "") or "--"),
-                str(row.get("plot_result", "") or "--"),
-                f"{float(row['probability_up']):.1%}",
-                str(row.get("best_champion_name", "") or "--"),
-            ]
+    for variant in DASHBOARD_VARIANTS:
+        track_ids = tuple(variant.get("track_ids", ()))
+        variant_history_source = filter_history_by_track_ids(history, track_ids)
+        variant_standard_history = build_standard_history(variant_history_source)
+        variant_prediction = build_standard_prediction_record(
+            prediction_payload,
+            track_ids=track_ids,
         )
-
-    table = ax_table.table(
-        cellText=table_rows,
-        colLabels=["Time", "Track", "Signal", "Actual", "Result", "Prob UP", "Champion"],
-        loc="center",
-        cellLoc="center",
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.4)
-    ax_table.set_title("Recent consolidated predictions", pad=12)
-
-    summary_lines = []
-    if prediction_payload is not None:
-        active_tracks = [
-            track_id
-            for track_id, payload in prediction_payload.get("tracks", {}).items()
-            if payload.get("status") == "success"
-        ]
-        summary_lines.append(f"Active tracks this run: {', '.join(active_tracks) or 'none'}")
-        summary_lines.append(
-            f"Target candle: {prediction_payload.get('target_candle_timestamp', '--')}"
+        standard_variant = {
+            **variant,
+            "filter_mode": "all",
+        }
+        variant_history, stats, variant_prediction = standard.build_dashboard_variant_view(
+            variant_standard_history,
+            variant_prediction,
+            standard_variant,
         )
-    if not resolved.empty:
-        total = len(resolved)
-        wins = int((resolved["plot_result"] == "WIN").sum())
-        summary_lines.append(f"Resolved accuracy: {wins}/{total} ({(wins / total) * 100:.1f}%)")
-    fig.text(0.02, 0.02, " | ".join(summary_lines), fontsize=10)
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.95))
-    fig.savefig(path, dpi=160)
-    plt.close(fig)
+        standard.render_dashboard(
+            variant_history,
+            stats,
+            variant_prediction,
+            dashboard_path=variant["path"],
+            dashboard_title=variant.get("title"),
+            dashboard_subtitle=variant.get("subtitle"),
+        )
 
 
 def main() -> None:
-    config.ensure_output_dirs()
     history = io.load_history()
     history = refresh_history_outcomes(history)
     prediction_payload = load_last_prediction()
-    for variant in DASHBOARD_VARIANTS:
-        render_dashboard(
-            history,
-            prediction_payload,
-            path=variant["path"],
-            title=variant["title"],
-            reverse=variant["reverse"],
-            market_hours_only=variant["market_hours_only"],
-        )
+    render_dashboard_variants(history, prediction_payload)
 
 
 if __name__ == "__main__":
