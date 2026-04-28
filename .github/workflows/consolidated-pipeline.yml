@@ -46,86 +46,79 @@ jobs:
           test -n "$MLFLOW_TRACKING_USERNAME"
           test -n "$MLFLOW_TRACKING_PASSWORD"
 
-      - name: Run consolidated tournament
-        run: python pipelines/consolidated/main.py
+      - name: Run consolidated local-style pipeline
+        run: python run_local_consolidated_pipeline.py --event-name "${{ github.event_name }}"
 
-      - name: Refresh consolidated dashboards
+      - name: Final consolidated history backfill and dashboard refresh
         if: always()
         run: python pipelines/consolidated/validate_dashboard.py
 
-      - name: Commit consolidated artifacts
+      - name: Commit final consolidated artifacts
         if: always()
         run: |
-          tracked_files=(
-            artifacts/consolidated/last_prediction.json
-            artifacts/consolidated/history.csv
-            artifacts/consolidated/workflow.log
-            artifacts/consolidated/comparison_summary.json
-            assets/consolidated/dashboard.png
-            assets/consolidated/dashboard_reverse.png
-            assets/consolidated/dashboard_market_hours.png
-            assets/consolidated/dashboard_market_hours_reverse.png
-          )
-          existing_files=()
-          for file in "${tracked_files[@]}"; do
-            if [ -f "$file" ]; then
-              existing_files+=("$file")
-            fi
-          done
-          if [ "${#existing_files[@]}" -eq 0 ]; then
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          tmpdir=$(mktemp -d)
-          for file in "${existing_files[@]}"; do
-            mkdir -p "$tmpdir/$(dirname "$file")"
-            cp "$file" "$tmpdir/$file"
-          done
-
-          success=false
-          for attempt in 1 2 3 4 5; do
-            echo "Artifact push attempt $attempt (reset-and-reapply)"
-            git fetch origin main
-            git reset --hard origin/main
-            for file in "${existing_files[@]}"; do
-              if [ -f "$tmpdir/$file" ]; then
-                mkdir -p "$(dirname "$file")"
-                cp "$tmpdir/$file" "$file"
+          if [ -f artifacts/consolidated/history.csv ] || [ -f assets/consolidated/dashboard.png ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            tmpdir=$(mktemp -d)
+            tracked_files=(
+              artifacts/consolidated/last_prediction.json
+              artifacts/consolidated/history.csv
+              artifacts/consolidated/workflow.log
+              artifacts/consolidated/comparison_summary.json
+              assets/consolidated/dashboard.png
+              assets/consolidated/dashboard_reverse.png
+              assets/consolidated/dashboard_market_hours.png
+              assets/consolidated/dashboard_market_hours_reverse.png
+            )
+            for file in "${tracked_files[@]}"; do
+              if [ -f "$file" ]; then
+                mkdir -p "$tmpdir/$(dirname "$file")"
+                cp "$file" "$tmpdir/$file"
               fi
             done
-            normal_files=()
-            force_files=()
-            for file in "${existing_files[@]}"; do
-              case "$file" in
-                *.log)
-                  force_files+=("$file")
-                  ;;
-                *)
-                  normal_files+=("$file")
-                  ;;
-              esac
+            success=false
+            for attempt in 1 2 3 4 5; do
+              echo "Consolidated artifact push attempt $attempt (reset-and-reapply)"
+              git fetch origin main
+              git reset --hard origin/main
+              for file in "${tracked_files[@]}"; do
+                if [ -f "$tmpdir/$file" ]; then
+                  mkdir -p "$(dirname "$file")"
+                  cp "$tmpdir/$file" "$file"
+                fi
+              done
+              normal_files=()
+              force_files=()
+              for file in "${tracked_files[@]}"; do
+                case "$file" in
+                  *.log)
+                    force_files+=("$file")
+                    ;;
+                  *)
+                    normal_files+=("$file")
+                    ;;
+                esac
+              done
+              if [ "${#normal_files[@]}" -gt 0 ]; then
+                git add -- "${normal_files[@]}"
+              fi
+              if [ "${#force_files[@]}" -gt 0 ]; then
+                git add -f -- "${force_files[@]}"
+              fi
+              if [ -z "$(git status --porcelain)" ]; then
+                success=true
+                break
+              fi
+              git commit -m "BTC consolidated backfill [skip ci]"
+              if git push origin HEAD:main; then
+                success=true
+                break
+              fi
+              sleep 2
             done
-            if [ "${#normal_files[@]}" -gt 0 ]; then
-              git add -- "${normal_files[@]}"
+            rm -rf "$tmpdir"
+            if [ "$success" != "true" ]; then
+              echo "Failed to push consolidated backfill artifacts after 5 attempts."
+              exit 1
             fi
-            if [ "${#force_files[@]}" -gt 0 ]; then
-              git add -f -- "${force_files[@]}"
-            fi
-            if [ -z "$(git status --porcelain)" ]; then
-              success=true
-              break
-            fi
-            git commit -m "BTC consolidated artifacts [skip ci]"
-            if git push origin HEAD:main; then
-              success=true
-              break
-            fi
-            sleep 2
-          done
-          rm -rf "$tmpdir"
-          if [ "$success" != "true" ]; then
-            echo "Failed to push consolidated artifacts after 5 attempts."
-            exit 1
           fi

@@ -53,10 +53,13 @@ MODEL_ARTIFACT_NAME = "model"
 LAST_PREDICTION_PATH = Path("last_prediction.json")
 CHAMPION_ALIAS = "champion"
 CHAMPION_CACHE_METADATA_FILENAME = "_champion_cache.json"
+REGISTRATION_POLL_INTERVAL_SECONDS = 1.0
+REGISTRATION_LOOKUP_TIMEOUT_SECONDS = 60.0
 BINANCE_CANDIDATES = [
     ("binance", "BTC/USDT", {}),
     ("binance", "BTC/USDT:USDT", {"options": {"defaultType": "future"}}),
 ]
+PROMOTION_PAYLOAD_CACHE: dict[str, dict[str, Any]] = {}
 BINANCE_US_CANDIDATE = ("binanceus", "BTC/USDT", {})
 FALLBACK_EXCHANGE_CANDIDATES = [
     ("kraken", "BTC/USDT", {}),
@@ -1132,6 +1135,62 @@ def build_model_pip_requirements() -> list[str]:
     ]
 
 
+def log_timing(message: str, seconds: float) -> None:
+    print(f"{message}: {seconds:.2f}s")
+
+
+def get_promotion_payload(
+    candidate: TournamentCandidate,
+    feature_rows: pd.DataFrame,
+) -> tuple[dict[str, Any], bool]:
+    cache_key = candidate.family
+    cached = PROMOTION_PAYLOAD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached, True
+
+    temp_dir_obj = tempfile.TemporaryDirectory()
+    package_dir = Path(temp_dir_obj.name) / ARTIFACT_SUBDIR
+    save_candidate_package(candidate, package_dir)
+    input_example, signature = build_model_logging_inputs(candidate, feature_rows)
+    payload = {
+        "temp_dir_obj": temp_dir_obj,
+        "package_dir": package_dir,
+        "input_example": input_example,
+        "signature": signature,
+        "pip_requirements": build_model_pip_requirements(),
+    }
+    PROMOTION_PAYLOAD_CACHE[cache_key] = payload
+    return payload, False
+
+
+def find_logged_model_version(
+    client: MlflowClient,
+    *,
+    run_id: str,
+    registered_model_name: str,
+    timeout_seconds: float = REGISTRATION_LOOKUP_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = REGISTRATION_POLL_INTERVAL_SECONDS,
+) -> Any:
+    deadline = time.perf_counter() + timeout_seconds
+    last_versions: list[Any] = []
+    while True:
+        versions = client.search_model_versions(f"run_id = '{run_id}'")
+        matching_versions = [
+            version
+            for version in versions
+            if getattr(version, "name", "") == registered_model_name
+        ]
+        if matching_versions:
+            return sorted(matching_versions, key=lambda item: int(item.version))[-1]
+        last_versions = versions
+        if time.perf_counter() >= deadline:
+            raise RuntimeError(
+                "Registered model version was not found for the promoted run "
+                f"within {timeout_seconds:.0f}s. Last visible versions: {len(last_versions)}"
+            )
+        time.sleep(poll_interval_seconds)
+
+
 def get_current_champion(
     client: MlflowClient,
     registered_model_name: str,
@@ -1314,87 +1373,100 @@ def promote_champion(
     alias: str,
 ) -> str:
     log_step(f"Promote new champion: {winner['candidate'].name} ({alias})")
+    total_start = time.perf_counter()
     candidate: TournamentCandidate = winner["candidate"]
-    with tempfile.TemporaryDirectory() as temp_dir:
-        package_dir = Path(temp_dir) / ARTIFACT_SUBDIR
-        save_candidate_package(candidate, package_dir)
-        input_example, signature = build_model_logging_inputs(candidate, feature_rows)
-        model_code_path = Path(__file__).with_name("mlflow_tournament_model.py")
-        active_run = mlflow.active_run()
-        if active_run is None:
-            raise RuntimeError("Champion promotion requires an active MLflow run.")
+    prepare_start = time.perf_counter()
+    promotion_payload, cache_hit = get_promotion_payload(candidate, feature_rows)
+    prepare_seconds = time.perf_counter() - prepare_start
 
-        metric_prefix = candidate.family.replace("-", "_")
-        mlflow.set_tags(
-            {
-                f"{metric_prefix}_promotion_role": "champion_candidate",
-                f"{metric_prefix}_model_name": candidate.name,
-                f"{metric_prefix}_model_family": candidate.family,
-                f"{metric_prefix}_feature_preprocessor": FEATURE_PREPROCESSOR_NAME,
-                f"{metric_prefix}_features_normalized": "true",
-                f"{metric_prefix}_champion_alias": alias,
-                f"{metric_prefix}_validation_start": validation_start,
-                f"{metric_prefix}_validation_end": validation_end,
-            }
-        )
-        mlflow.log_metrics(
-            {
-                f"{metric_prefix}_promotion_accuracy": winner["accuracy"],
-                f"{metric_prefix}_promotion_f1": winner["f1"],
-                f"{metric_prefix}_promotion_next_probability": winner["next_probability"],
-            }
-        )
-        artifact_name = f"{MODEL_ARTIFACT_NAME}_{candidate.family}"
-        mlflow.pyfunc.log_model(
-            name=artifact_name,
-            python_model=str(model_code_path),
-            artifacts={"model_dir": str(package_dir)},
-            registered_model_name=registered_model_name,
-            input_example=input_example,
-            signature=signature,
-            pip_requirements=build_model_pip_requirements(),
-        )
+    model_code_path = Path(__file__).with_name("mlflow_tournament_model.py")
+    active_run = mlflow.active_run()
+    if active_run is None:
+        raise RuntimeError("Champion promotion requires an active MLflow run.")
 
-        versions = client.search_model_versions(f"run_id = '{active_run.info.run_id}'")
-        matching_versions = [
-            version
-            for version in versions
-            if getattr(version, "name", "") == registered_model_name
-        ]
-        if not matching_versions:
-            raise RuntimeError("Registered model version was not found for the promoted run.")
+    metric_prefix = candidate.family.replace("-", "_")
+    mlflow.set_tags(
+        {
+            f"{metric_prefix}_promotion_role": "champion_candidate",
+            f"{metric_prefix}_model_name": candidate.name,
+            f"{metric_prefix}_model_family": candidate.family,
+            f"{metric_prefix}_feature_preprocessor": FEATURE_PREPROCESSOR_NAME,
+            f"{metric_prefix}_features_normalized": "true",
+            f"{metric_prefix}_champion_alias": alias,
+            f"{metric_prefix}_validation_start": validation_start,
+            f"{metric_prefix}_validation_end": validation_end,
+        }
+    )
+    mlflow.log_metrics(
+        {
+            f"{metric_prefix}_promotion_accuracy": winner["accuracy"],
+            f"{metric_prefix}_promotion_f1": winner["f1"],
+            f"{metric_prefix}_promotion_next_probability": winner["next_probability"],
+        }
+    )
+    artifact_name = f"{MODEL_ARTIFACT_NAME}_{candidate.family}"
 
-        version = sorted(matching_versions, key=lambda item: int(item.version))[-1]
-        client.set_model_version_tag(
-            registered_model_name,
-            version.version,
-            "champion_alias",
-            alias,
-        )
-        client.set_model_version_tag(
-            registered_model_name,
-            version.version,
-            "tournament_model_name",
-            candidate.name,
-        )
-        client.set_model_version_tag(
-            registered_model_name,
-            version.version,
-            "feature_preprocessor",
-            FEATURE_PREPROCESSOR_NAME,
-        )
-        client.set_model_version_tag(
-            registered_model_name,
-            version.version,
-            "features_normalized",
-            "true",
-        )
-        client.set_registered_model_alias(
-            registered_model_name,
-            alias,
-            version.version,
-        )
-        return version.version
+    log_model_start = time.perf_counter()
+    mlflow.pyfunc.log_model(
+        name=artifact_name,
+        python_model=str(model_code_path),
+        artifacts={"model_dir": str(promotion_payload["package_dir"])},
+        registered_model_name=registered_model_name,
+        input_example=promotion_payload["input_example"],
+        signature=promotion_payload["signature"],
+        pip_requirements=promotion_payload["pip_requirements"],
+        await_registration_for=0,
+    )
+    log_model_seconds = time.perf_counter() - log_model_start
+
+    lookup_start = time.perf_counter()
+    version = find_logged_model_version(
+        client,
+        run_id=active_run.info.run_id,
+        registered_model_name=registered_model_name,
+    )
+    lookup_seconds = time.perf_counter() - lookup_start
+
+    registry_update_start = time.perf_counter()
+    client.set_model_version_tag(
+        registered_model_name,
+        version.version,
+        "champion_alias",
+        alias,
+    )
+    client.set_model_version_tag(
+        registered_model_name,
+        version.version,
+        "tournament_model_name",
+        candidate.name,
+    )
+    client.set_model_version_tag(
+        registered_model_name,
+        version.version,
+        "feature_preprocessor",
+        FEATURE_PREPROCESSOR_NAME,
+    )
+    client.set_model_version_tag(
+        registered_model_name,
+        version.version,
+        "features_normalized",
+        "true",
+    )
+    client.set_registered_model_alias(
+        registered_model_name,
+        alias,
+        version.version,
+    )
+    registry_update_seconds = time.perf_counter() - registry_update_start
+    total_seconds = time.perf_counter() - total_start
+
+    print(f"Promotion payload cache: {'hit' if cache_hit else 'miss'} for {candidate.family}")
+    log_timing("Promotion payload prep", prepare_seconds)
+    log_timing("Promotion log_model", log_model_seconds)
+    log_timing("Promotion version lookup", lookup_seconds)
+    log_timing("Promotion registry updates", registry_update_seconds)
+    log_timing("Promotion total", total_seconds)
+    return version.version
 
 
 def print_scoreboard(results: list[dict[str, Any]]) -> None:
