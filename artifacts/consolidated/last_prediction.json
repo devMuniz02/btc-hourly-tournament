@@ -1262,7 +1262,16 @@
             "registry_version": "1"
           }
         }
-      ]
+      ],
+      "generated_at": "2026-04-29T00:40:06.742323+00:00",
+      "target_candle_timestamp": "2026-04-29T01:00:00+00:00",
+      "prediction_generated_at": "2026-04-29T00:40:06.742358+00:00",
+      "workflow_name": "consolidated-market-hours",
+      "workflow_variant": "hourly_prediction_market_hours_only",
+      "daily_model_refresh": false,
+      "skipped_reason": "next target candle is outside ET market hours",
+      "prediction_window_open": false,
+      "training_window_open": false
     },
     "market_hours_daily": {
       "status": "success",
@@ -1681,7 +1690,16 @@
             "registry_version": "1"
           }
         }
-      ]
+      ],
+      "generated_at": "2026-04-29T00:40:06.742404+00:00",
+      "target_candle_timestamp": "2026-04-29T01:00:00+00:00",
+      "prediction_generated_at": "2026-04-29T00:40:06.742412+00:00",
+      "workflow_name": "consolidated-market-hours-daily",
+      "workflow_variant": "market_hours_prediction_same_day_refresh",
+      "daily_model_refresh": false,
+      "skipped_reason": "next target candle is outside ET market hours",
+      "prediction_window_open": false,
+      "training_window_open": false
     }
   },
   "error": "Could not fetch BTC/USDT candles from Binance variants or fallback exchanges. binance:BTC/USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {\n  \"code\": 0,\n  \"msg\": \"Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error.\"\n}"
