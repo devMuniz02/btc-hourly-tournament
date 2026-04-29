@@ -134,3 +134,14 @@ Exchange attempt failed for binance BTC/USDT: binance GET https://api.binance.co
   "code": 0,
   "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
 }
+
+=== Initialize consolidated BTC workflow ===
+current_et=2026-04-29T05:12:12.743709-04:00 target_et=2026-04-29T06:00:00-04:00 train_hours=07:00-19:59 prediction_target_hours=08:00-20:59
+2026/04/29 09:12:14 INFO mlflow.tracking.fluent: Experiment with name 'btc-consolidated-09:00_29_4' does not exist. Creating a new experiment.
+Using MLflow experiment: btc-consolidated-09:00_29_4 (UTC)
+
+=== Fetch BTC/USDT market data ===
+Exchange attempt failed for binance BTC/USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {
+  "code": 0,
+  "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
+}
