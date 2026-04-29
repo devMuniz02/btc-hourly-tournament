@@ -17,12 +17,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import artifact_sync
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.btc_pipeline import artifact_sync
+from src.btc_pipeline.path_config import CONSOLIDATED_LOCAL_LOG_PATH
 from pipelines.consolidated import config as consolidated_config
 
 
-ROOT = Path(__file__).resolve().parent
-LOG_PATH = ROOT / "local_consolidated_pipeline_run.txt"
+LOG_PATH = CONSOLIDATED_LOCAL_LOG_PATH
 LAST_PREDICTION_PATH = consolidated_config.LAST_PREDICTION_PATH
 ARTIFACT_FILES = tuple(consolidated_config.tracked_output_files())
 REQUIRED_ENV_VARS = [
@@ -366,6 +370,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("w", encoding="utf-8") as log_file:
         tee = Tee(sys.stdout, log_file)
         with redirect_stdout(tee), redirect_stderr(tee):
@@ -373,7 +378,6 @@ def main() -> int:
             print(f"Writing run log to {LOG_PATH}")
             args = parse_args()
             load_dotenv(ROOT / ".env")
-            os.environ["BTC_EXCHANGE_MODE"] = "binance"
             validate_required_env()
             consolidated_config.ensure_output_dirs()
             max_attempts = 2 if not args.skip_git and not args.skip_push else 1

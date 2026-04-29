@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+import sys
 
 import matplotlib
 
@@ -18,13 +19,25 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from mlflow import MlflowClient
 
-import main as tournament
-from market_hours_common import is_allowed_prediction_target_timestamp
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.btc_pipeline import main as tournament
+from src.btc_pipeline.market_hours_common import is_allowed_prediction_target_timestamp
+from src.btc_pipeline.path_config import (
+    HOURLY_DASHBOARD_MARKET_HOURS_PATH,
+    HOURLY_DASHBOARD_MARKET_HOURS_REVERSE_PATH,
+    HOURLY_DASHBOARD_PATH,
+    HOURLY_DASHBOARD_REVERSE_PATH,
+    HOURLY_HISTORY_PATH,
+    HOURLY_LAST_PREDICTION_PATH,
+)
 
 
-HISTORY_PATH = Path("history.csv")
-DASHBOARD_PATH = Path("assets/dashboard.png")
-LOCAL_LAST_PREDICTION_PATH = Path("last_prediction.json")
+HISTORY_PATH = HOURLY_HISTORY_PATH
+DASHBOARD_PATH = HOURLY_DASHBOARD_PATH
+LOCAL_LAST_PREDICTION_PATH = HOURLY_LAST_PREDICTION_PATH
 DASHBOARD_TITLE = "BTC Directional Bot Validation Dashboard"
 DASHBOARD_SUBTITLE = ""
 DASHBOARD_VARIANTS = [
@@ -36,21 +49,21 @@ DASHBOARD_VARIANTS = [
         "filter_mode": "all",
     },
     {
-        "path": Path("assets/dashboard_reverse.png"),
+        "path": HOURLY_DASHBOARD_REVERSE_PATH,
         "title": "BTC Directional Bot Reverse Dashboard",
         "subtitle": "Reverse actions from the same hourly predictions",
         "signal_mode": "reverse",
         "filter_mode": "all",
     },
     {
-        "path": Path("assets/dashboard_market_hours_from_24h.png"),
+        "path": HOURLY_DASHBOARD_MARKET_HOURS_PATH,
         "title": "BTC Directional Bot Market Hours Dashboard",
         "subtitle": "Filtered to ET market-hours target candles only",
         "signal_mode": "normal",
         "filter_mode": "market_hours",
     },
     {
-        "path": Path("assets/dashboard_market_hours_from_24h_reverse.png"),
+        "path": HOURLY_DASHBOARD_MARKET_HOURS_REVERSE_PATH,
         "title": "BTC Directional Bot Reverse Market Hours Dashboard",
         "subtitle": "Reverse actions filtered to ET market-hours target candles",
         "signal_mode": "reverse",
@@ -109,6 +122,30 @@ def ensure_history_schema(history: pd.DataFrame) -> pd.DataFrame:
 def build_history_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     frame = pd.DataFrame(rows, columns=HISTORY_COLUMNS)
     return ensure_history_schema(frame)
+
+
+def parse_binary_label(value: Any) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    normalized = text.upper()
+    if normalized == "UP":
+        return 1
+    if normalized == "DOWN":
+        return 0
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def format_binary_label(value: Any) -> str:
+    parsed = parse_binary_label(value)
+    if parsed is None:
+        return ""
+    return "UP" if parsed == 1 else "DOWN"
 
 
 def append_history_frame(history: pd.DataFrame, extra: pd.DataFrame) -> pd.DataFrame:
@@ -470,10 +507,13 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
             continue
 
         actual_label = int(float(row["reference_close"]) > float(row["reference_open"]))
+        actual_text = format_binary_label(actual_label)
         predicted_value = row["predicted"]
         predicted_text = "" if pd.isna(predicted_value) else str(predicted_value).strip()
-        if pd.isna(row["actual"]) or str(row["actual"]).strip() == "" or int(float(row["actual"])) != actual_label:
-            updated.at[idx, "actual"] = actual_label
+        current_actual_label = parse_binary_label(row["actual"])
+        current_actual_text = "" if pd.isna(row["actual"]) else str(row["actual"]).strip()
+        if current_actual_label != actual_label or current_actual_text != actual_text:
+            updated.at[idx, "actual"] = actual_text
             changed = True
 
         if predicted_text == "" or predicted_text.upper() == "FAILED":
@@ -483,11 +523,14 @@ def normalize_history_labels(history: pd.DataFrame) -> pd.DataFrame:
                 continue
             continue
 
-        predicted_label = int(float(predicted_value))
+        predicted_label = parse_binary_label(predicted_value)
+        if predicted_label is None:
+            continue
         result = int(predicted_label == actual_label)
 
         current_result = row["result"]
-        if pd.isna(current_result) or str(current_result).strip() == "" or int(float(current_result)) != result:
+        current_result_label = parse_binary_label(current_result)
+        if current_result_label != result:
             updated.at[idx, "result"] = result
             if str(row.get("status", "")) == "missing":
                 updated.at[idx, "status"] = "validated"
@@ -780,8 +823,8 @@ def render_dashboard(
         for _, row in scored.iterrows():
             model_payload = parse_model_predictions(row.get("model_predictions")).get(family, {})
             predicted_label = model_payload.get("predicted_label")
-            actual_label = pd.to_numeric(row.get("actual"), errors="coerce")
-            if predicted_label is None or pd.isna(actual_label):
+            actual_label = parse_binary_label(row.get("actual"))
+            if predicted_label is None or actual_label is None:
                 continue
             total += 1
             correct += int(int(predicted_label) == int(actual_label))
@@ -1165,7 +1208,7 @@ def main() -> None:
         {
             "timestamp": target_timestamp,
             "predicted": predicted_label,
-            "actual": actual_label,
+            "actual": format_binary_label(actual_label),
             "result": result,
             "failed": 0,
             "status": "validated",
@@ -1196,7 +1239,7 @@ def main() -> None:
                 "champion_version": prediction_record.get("best_champion_version"),
                 "model_name": prediction_record.get("model_name"),
                 "predicted": predicted_label,
-                "actual": actual_label,
+                "actual": format_binary_label(actual_label),
                 "result": result,
                 "reference_open": reference_open,
                 "reference_close": reference_close,

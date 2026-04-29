@@ -15,19 +15,32 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 
-import artifact_sync
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.btc_pipeline import artifact_sync
+from src.btc_pipeline.path_config import (
+    HOURLY_DASHBOARD_MARKET_HOURS_PATH,
+    HOURLY_DASHBOARD_MARKET_HOURS_REVERSE_PATH,
+    HOURLY_DASHBOARD_PATH,
+    HOURLY_DASHBOARD_REVERSE_PATH,
+    HOURLY_HISTORY_PATH,
+    HOURLY_LAST_PREDICTION_PATH,
+    HOURLY_LOCAL_LOG_PATH,
+    ensure_btc_output_dirs,
+)
 
 
-ROOT = Path(__file__).resolve().parent
-LOG_PATH = ROOT / "local_pipeline_run.txt"
-LAST_PREDICTION_PATH = ROOT / "last_prediction.json"
+LOG_PATH = HOURLY_LOCAL_LOG_PATH
+LAST_PREDICTION_PATH = HOURLY_LAST_PREDICTION_PATH
 ARTIFACT_FILES = [
-    ROOT / "history.csv",
-    ROOT / "assets" / "dashboard.png",
-    ROOT / "assets" / "dashboard_reverse.png",
-    ROOT / "assets" / "dashboard_market_hours_from_24h.png",
-    ROOT / "assets" / "dashboard_market_hours_from_24h_reverse.png",
-    ROOT / "last_prediction.json",
+    HOURLY_HISTORY_PATH,
+    HOURLY_DASHBOARD_PATH,
+    HOURLY_DASHBOARD_REVERSE_PATH,
+    HOURLY_DASHBOARD_MARKET_HOURS_PATH,
+    HOURLY_DASHBOARD_MARKET_HOURS_REVERSE_PATH,
+    HOURLY_LAST_PREDICTION_PATH,
 ]
 NON_BLOCKING_LOCAL_FILES = [
     LOG_PATH,
@@ -163,7 +176,7 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
     if not args.skip_git:
         sync_with_origin_main()
 
-    validate_exit_code = run_python_script("validate_dashboard.py")
+    validate_exit_code = run_python_script("src/btc_pipeline/validate_dashboard.py")
 
     run_tournament = should_run_tournament(args.event_name)
 
@@ -181,8 +194,8 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
         tournament_args: list[str] = []
         if args.reset_champion_from_challenger:
             tournament_args.append("--reset-champion-from-challenger")
-        tournament_exit_code = run_python_script("main.py", tournament_args)
-        refresh_exit_code = run_python_script("validate_dashboard.py")
+        tournament_exit_code = run_python_script("src/btc_pipeline/main.py", tournament_args)
+        refresh_exit_code = run_python_script("src/btc_pipeline/validate_dashboard.py")
         if refresh_exit_code != 0 and tournament_exit_code == 0:
             tournament_exit_code = refresh_exit_code
 
@@ -229,6 +242,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("w", encoding="utf-8") as log_file:
         tee = Tee(sys.stdout, log_file)
         with redirect_stdout(tee), redirect_stderr(tee):
@@ -237,6 +251,7 @@ def main() -> int:
             args = parse_args()
             load_dotenv(ROOT / ".env")
             os.environ["BTC_EXCHANGE_MODE"] = "binance"
+            ensure_btc_output_dirs()
             validate_required_env()
             max_attempts = 2 if not args.skip_git and not args.skip_push else 1
             for attempt in range(1, max_attempts + 1):

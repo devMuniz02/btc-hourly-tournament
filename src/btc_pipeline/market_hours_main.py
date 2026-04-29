@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import traceback
 from pathlib import Path
 
@@ -14,16 +15,19 @@ import mlflow
 import pandas as pd
 from mlflow import MlflowClient
 
-import main as tournament
-from market_hours_common import (
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.btc_pipeline import main as tournament
+from src.btc_pipeline.market_hours_common import (
     describe_window,
     next_target_timestamp_utc,
     should_run_prediction_window,
     should_run_training_window,
 )
+from src.btc_pipeline.path_config import MARKET_HOURS_LAST_PREDICTION_PATH
 
-
-MARKET_HOURS_LAST_PREDICTION_PATH = Path("last_prediction_market_hours.json")
 MARKET_HOURS_EXPERIMENT_PREFIX = "btc-market-hours"
 MARKET_HOURS_MODEL_NAME_SUFFIX = "-market-hours"
 MARKET_HOURS_WORKFLOW_NAME = "market-hours-hourly"

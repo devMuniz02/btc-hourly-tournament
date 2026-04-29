@@ -5,28 +5,39 @@ Validation dashboard wrapper for the isolated ET market-hours hourly workflow.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-import validate_dashboard as dashboard
-from market_hours_common import is_allowed_prediction_target_timestamp
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.btc_pipeline import validate_dashboard as dashboard
+from src.btc_pipeline.market_hours_common import is_allowed_prediction_target_timestamp
+from src.btc_pipeline.path_config import (
+    MARKET_HOURS_DASHBOARD_PATH,
+    MARKET_HOURS_DASHBOARD_REVERSE_PATH,
+    MARKET_HOURS_HISTORY_PATH,
+    MARKET_HOURS_LAST_PREDICTION_PATH,
+)
 
 
-dashboard.HISTORY_PATH = Path("history_market_hours.csv")
-dashboard.DASHBOARD_PATH = Path("assets/dashboard_market_hours.png")
-dashboard.LOCAL_LAST_PREDICTION_PATH = Path("last_prediction_market_hours.json")
+dashboard.HISTORY_PATH = MARKET_HOURS_HISTORY_PATH
+dashboard.DASHBOARD_PATH = MARKET_HOURS_DASHBOARD_PATH
+dashboard.LOCAL_LAST_PREDICTION_PATH = MARKET_HOURS_LAST_PREDICTION_PATH
 dashboard.DASHBOARD_TITLE = "BTC Market Hours Validation Dashboard"
 dashboard.DASHBOARD_VARIANTS = [
     {
-        "path": Path("assets/dashboard_market_hours.png"),
+        "path": MARKET_HOURS_DASHBOARD_PATH,
         "title": "BTC Market Hours Validation Dashboard",
         "subtitle": "",
         "signal_mode": "normal",
         "filter_mode": "market_hours",
     },
     {
-        "path": Path("assets/dashboard_market_hours_reverse.png"),
+        "path": MARKET_HOURS_DASHBOARD_REVERSE_PATH,
         "title": "BTC Reverse Market Hours Dashboard",
         "subtitle": "Reverse actions from the same market-hours predictions",
         "signal_mode": "reverse",

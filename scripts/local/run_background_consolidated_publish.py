@@ -13,13 +13,15 @@ import sys
 import traceback
 from pathlib import Path
 
-import artifact_sync
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import pandas as pd
+from src.btc_pipeline import artifact_sync
 from pipelines.consolidated import config as consolidated_config
 from pipelines.consolidated import main as consolidated_main
 
-
-ROOT = Path(__file__).resolve().parent
 LOG_DIR = consolidated_config.ARTIFACT_DIR / "background_logs"
 LOG_PREFIX = "background-publish"
 ARTIFACT_FILES = tuple(consolidated_config.tracked_output_files())
@@ -48,8 +50,9 @@ def log_step(message: str) -> None:
 def resolve_hourly_log_path(
     log_dir: Path,
     prefix: str,
+    reference_time: pd.Timestamp | None = None,
 ) -> Path:
-    timestamp = pd.Timestamp.utcnow()
+    timestamp = pd.Timestamp.utcnow() if reference_time is None else pd.Timestamp(reference_time)
     timestamp = timestamp.tz_localize("UTC") if timestamp.tzinfo is None else timestamp.tz_convert("UTC")
     timestamp = timestamp.floor("h")
     return log_dir / f"{prefix}-{timestamp.strftime('%Y%m%d-%H00Z')}.log"
@@ -157,11 +160,17 @@ def push_current_head(commit_message: str) -> bool:
 def main() -> int:
     args = parse_args()
     consolidated_config.ensure_output_dirs()
-    log_path = resolve_hourly_log_path(LOG_DIR, LOG_PREFIX)
-    prune_hourly_logs(LOG_DIR, LOG_PREFIX)
     manifest_path = Path(args.manifest_path)
     if not manifest_path.exists():
         raise RuntimeError(f"Deferred consolidated publish manifest not found: {manifest_path}")
+    with manifest_path.open("rb") as handle:
+        pending_publish = pickle.load(handle)
+    log_path = resolve_hourly_log_path(
+        LOG_DIR,
+        LOG_PREFIX,
+        reference_time=getattr(pending_publish, "run_reference_time", None),
+    )
+    prune_hourly_logs(LOG_DIR, LOG_PREFIX)
 
     with log_path.open("w", encoding="utf-8", buffering=1) as log_file:
         original_stdout = sys.stdout
@@ -171,12 +180,7 @@ def main() -> int:
         try:
             log_step("Load local environment")
             load_dotenv(ROOT / ".env")
-            os.environ["BTC_EXCHANGE_MODE"] = "binance"
             validate_required_env()
-
-            log_step("Load deferred consolidated publish payload")
-            with manifest_path.open("rb") as handle:
-                pending_publish = pickle.load(handle)
 
             log_step("Promote deferred consolidated champions")
             execution = consolidated_main.finalize_pending_publish(pending_publish)

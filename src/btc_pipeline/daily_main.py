@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
 """
-Isolated daily-refresh BTC pipeline for ET market hours with hourly daytime predictions.
+Hourly BTC prediction pipeline with once-daily model refresh at midnight ET.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 import traceback
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import mlflow
 import pandas as pd
 from mlflow import MlflowClient
 
-import main as tournament
-from market_hours_common import (
-    EASTERN_TZ,
-    current_et_timestamp,
-    describe_window,
-    next_target_timestamp_utc,
-    should_run_prediction_window,
-    should_run_training_window,
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.btc_pipeline import main as tournament
+from src.btc_pipeline.path_config import DAILY_LAST_PREDICTION_PATH
 
 
-MARKET_HOURS_DAILY_LAST_PREDICTION_PATH = Path("last_prediction_market_hours_daily.json")
-MARKET_HOURS_DAILY_EXPERIMENT_PREFIX = "btc-market-hours-daily"
-MARKET_HOURS_DAILY_MODEL_NAME_SUFFIX = "-market-hours-daily"
-MARKET_HOURS_DAILY_WORKFLOW_NAME = "market-hours-daily"
-MARKET_HOURS_DAILY_WORKFLOW_VARIANT = "daily_refresh_7am_7pm_et_hourly_predict_8am_8pm_et"
+EASTERN_TZ = ZoneInfo("America/New_York")
+DAILY_WORKFLOW_NAME = "daily-hourly"
+DAILY_WORKFLOW_VARIANT = "daily_model_hourly_prediction"
+DAILY_EXPERIMENT_PREFIX = "btc-daily"
+DAILY_MODEL_NAME_SUFFIX = "-daily"
 MODEL_FAMILIES = (
     "rf",
     "xgb",
@@ -41,40 +40,48 @@ MODEL_FAMILIES = (
 )
 
 
-def configure_market_hours_daily_paths() -> None:
-    tournament.LAST_PREDICTION_PATH = MARKET_HOURS_DAILY_LAST_PREDICTION_PATH
+def configure_daily_paths() -> None:
+    tournament.LAST_PREDICTION_PATH = DAILY_LAST_PREDICTION_PATH
 
 
-def resolve_market_hours_daily_registered_model_name() -> str:
-    explicit_name = tournament.get_env_str("MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME")
+def resolve_daily_registered_model_name() -> str:
+    explicit_name = tournament.get_env_str("MLFLOW_DAILY_MODEL_NAME")
     if explicit_name:
         return explicit_name
     base_name = tournament.get_env_str("MLFLOW_MODEL_NAME") or tournament.DEFAULT_MODEL_NAME
-    return f"{base_name}{MARKET_HOURS_DAILY_MODEL_NAME_SUFFIX}"
+    return f"{base_name}{DAILY_MODEL_NAME_SUFFIX}"
 
 
-def configure_market_hours_daily_tracking() -> str:
-    tournament.DEFAULT_EXPERIMENT_PREFIX = MARKET_HOURS_DAILY_EXPERIMENT_PREFIX
-    registered_model_name = resolve_market_hours_daily_registered_model_name()
+def configure_daily_tracking() -> str:
+    tournament.DEFAULT_EXPERIMENT_PREFIX = DAILY_EXPERIMENT_PREFIX
+    registered_model_name = resolve_daily_registered_model_name()
     tournament.configure_tracking()
     return registered_model_name
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the isolated ET market-hours daily refresh BTC pipeline."
+        description="Run hourly BTC predictions while refreshing family champions once per day at midnight ET."
     )
     parser.add_argument(
         "--reset-champion-from-challenger",
         action="store_true",
-        help="Ignore the current champion comparison and choose from the top challenger only during refresh.",
+        help="Ignore the current champion comparison and choose from the top challenger only during the daily refresh.",
     )
     parser.add_argument(
         "--force-refresh",
         action="store_true",
-        help="Force a refresh during an allowed ET training hour.",
+        help="Force a full daily model refresh even when the current ET hour is not midnight.",
     )
     return parser.parse_args()
+
+
+def should_refresh_daily_models(now: pd.Timestamp | None = None) -> bool:
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if current.tzinfo is None:
+        current = current.tz_localize("UTC")
+    eastern_now = current.tz_convert(EASTERN_TZ)
+    return eastern_now.hour == 0
 
 
 def champions_trained_for_current_et_day(
@@ -82,7 +89,11 @@ def champions_trained_for_current_et_day(
     registered_model_name: str,
     now: pd.Timestamp | None = None,
 ) -> bool:
-    current_et_day = current_et_timestamp(now).date()
+    current = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    if current.tzinfo is None:
+        current = current.tz_localize("UTC")
+    current_et_day = current.tz_convert(EASTERN_TZ).date()
+
     for family in MODEL_FAMILIES:
         family_registered_model_name = tournament.registered_model_name_for_family(
             registered_model_name,
@@ -115,6 +126,7 @@ def champions_trained_for_current_et_day(
                 f"{version_et_day.isoformat()} ET, not {current_et_day.isoformat()} ET."
             )
             return False
+
     return True
 
 
@@ -140,13 +152,42 @@ def enrich_prediction_record(
     *,
     daily_model_refresh: bool,
 ) -> dict[str, Any]:
+    current_et_day = pd.Timestamp.now(tz="UTC").tz_convert(EASTERN_TZ).date().isoformat()
     updated = dict(prediction_record)
-    updated["workflow_name"] = MARKET_HOURS_DAILY_WORKFLOW_NAME
-    updated["workflow_variant"] = MARKET_HOURS_DAILY_WORKFLOW_VARIANT
+    updated["workflow_name"] = DAILY_WORKFLOW_NAME
+    updated["workflow_variant"] = DAILY_WORKFLOW_VARIANT
     updated["daily_model_refresh"] = bool(daily_model_refresh)
-    updated["model_refresh_et_date"] = current_et_timestamp().date().isoformat()
+    updated["model_refresh_et_date"] = current_et_day
     updated["prediction_generated_at"] = updated.get("generated_at")
     return updated
+
+
+def log_prediction_record(
+    prediction_record: dict[str, Any],
+    active_result: dict[str, Any],
+    active_results_by_family: dict[str, dict[str, Any]],
+    *,
+    run_name: str,
+    daily_model_refresh: bool,
+) -> None:
+    with mlflow.start_run(run_name=run_name):
+        tournament.print_scoreboard(list(active_results_by_family.values()))
+        mlflow.set_tags(
+            {
+                "asset": tournament.SYMBOL,
+                "timeframe": tournament.TIMEFRAME,
+                "validation_hours": str(tournament.VALIDATION_HOURS),
+                "daily_model_refresh": str(daily_model_refresh).lower(),
+            }
+        )
+        tournament.log_comparison_metrics(
+            active_results_by_family=active_results_by_family,
+            active_result=active_result,
+        )
+        mlflow.log_text(
+            json.dumps(prediction_record, indent=2),
+            DAILY_LAST_PREDICTION_PATH.name,
+        )
 
 
 def write_prediction_record(
@@ -168,31 +209,18 @@ def write_prediction_record(
         prediction_record,
         daily_model_refresh=daily_model_refresh,
     )
-    tournament.log_step("Write latest market-hours daily prediction metadata")
-    MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.write_text(
+    tournament.log_step("Write latest daily prediction metadata")
+    DAILY_LAST_PREDICTION_PATH.write_text(
         json.dumps(prediction_record, indent=2),
         encoding="utf-8",
     )
-    with mlflow.start_run(run_name=run_name):
-        tournament.print_scoreboard(list(active_results_by_family.values()))
-        mlflow.set_tags(
-            {
-                "asset": tournament.SYMBOL,
-                "timeframe": tournament.TIMEFRAME,
-                "validation_hours": str(tournament.VALIDATION_HOURS),
-                "daily_model_refresh": str(daily_model_refresh).lower(),
-                "market_hours_workflow": "true",
-            }
-        )
-        tournament.log_comparison_metrics(
-            active_results_by_family=active_results_by_family,
-            active_result=active_result,
-        )
-        mlflow.log_text(
-            json.dumps(prediction_record, indent=2),
-            MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.name,
-        )
-
+    log_prediction_record(
+        prediction_record,
+        active_result,
+        active_results_by_family,
+        run_name=run_name,
+        daily_model_refresh=daily_model_refresh,
+    )
     print(
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
@@ -243,6 +271,7 @@ def load_registered_champions(
             "Prediction-only mode requires an existing champion for every family. "
             f"Missing champion aliases for: {missing}"
         )
+
     return active_results_by_family
 
 
@@ -254,7 +283,7 @@ def run_prediction_only(
     future_row: pd.DataFrame,
     champion_download_root: Path | None = None,
 ) -> None:
-    tournament.log_step("Load registered family champions for ET market-hours prediction")
+    tournament.log_step("Load registered family champions for hourly prediction")
     active_results_by_family = load_registered_champions(
         client,
         registered_model_name,
@@ -269,7 +298,7 @@ def run_prediction_only(
         active_results_by_family,
         future_row,
         registered_model_name,
-        run_name="btc-directional-market-hours-daily-hourly-prediction",
+        run_name="btc-directional-daily-hourly-prediction",
         daily_model_refresh=False,
     )
 
@@ -370,7 +399,7 @@ def run_full_refresh(
 
     active_result = sorted(active_results_by_family.values(), key=tournament.ranking_key)[0]
 
-    with mlflow.start_run(run_name="btc-directional-market-hours-daily-refresh"):
+    with mlflow.start_run(run_name="btc-directional-daily-refresh"):
         tournament.print_scoreboard(all_results)
         mlflow.set_tags(
             {
@@ -378,7 +407,6 @@ def run_full_refresh(
                 "timeframe": tournament.TIMEFRAME,
                 "validation_hours": str(tournament.VALIDATION_HOURS),
                 "daily_model_refresh": "true",
-                "market_hours_workflow": "true",
             }
         )
         mlflow.log_params(
@@ -435,8 +463,7 @@ def run_full_refresh(
                         run_id=str(version.run_id),
                     )
                 print(
-                    f"{challenger_result['name']} -> promoted to "
-                    f"{decision['registered_model_name']} version {new_version}"
+                    f"{challenger_result['name']} -> promoted to {decision['registered_model_name']} version {new_version}"
                 )
             elif champion_result is not None:
                 decision["active_result"]["registry_version"] = decision["champion_meta"]["version"]
@@ -446,8 +473,7 @@ def run_full_refresh(
                 )
             else:
                 print(
-                    f"{challenger_result['name']} -> no existing "
-                    f"{decision['registered_model_name']} and not promoted"
+                    f"{challenger_result['name']} -> no existing {decision['registered_model_name']} and not promoted"
                 )
 
         best_registered_result = next(
@@ -477,8 +503,8 @@ def run_full_refresh(
             prediction_record,
             daily_model_refresh=True,
         )
-        tournament.log_step("Write latest market-hours daily prediction metadata")
-        MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.write_text(
+        tournament.log_step("Write latest daily prediction metadata")
+        DAILY_LAST_PREDICTION_PATH.write_text(
             json.dumps(prediction_record, indent=2),
             encoding="utf-8",
         )
@@ -498,7 +524,7 @@ def run_full_refresh(
         )
         mlflow.log_text(
             json.dumps(prediction_record, indent=2),
-            MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.name,
+            DAILY_LAST_PREDICTION_PATH.name,
         )
 
     print(
@@ -509,23 +535,22 @@ def run_full_refresh(
 
 
 def write_failed_prediction_record(exc: Exception) -> None:
-    target_timestamp = next_target_timestamp_utc()
+    target_timestamp = (pd.Timestamp.utcnow().floor("h") + pd.Timedelta(hours=1)).isoformat()
     failure_record = {
         "status": "failed",
         "generated_at": pd.Timestamp.utcnow().isoformat(),
-        "registered_model_name": resolve_market_hours_daily_registered_model_name(),
+        "registered_model_name": resolve_daily_registered_model_name(),
         "symbol": tournament.SYMBOL,
         "timeframe": tournament.TIMEFRAME,
-        "reference_candle_timestamp": (target_timestamp - pd.Timedelta(hours=1)).isoformat(),
-        "target_candle_timestamp": target_timestamp.isoformat(),
+        "target_candle_timestamp": target_timestamp,
         "error": str(exc),
-        "workflow_name": MARKET_HOURS_DAILY_WORKFLOW_NAME,
-        "workflow_variant": MARKET_HOURS_DAILY_WORKFLOW_VARIANT,
+        "workflow_name": DAILY_WORKFLOW_NAME,
+        "workflow_variant": DAILY_WORKFLOW_VARIANT,
         "daily_model_refresh": False,
-        "model_refresh_et_date": current_et_timestamp().date().isoformat(),
+        "model_refresh_et_date": pd.Timestamp.now(tz="UTC").tz_convert(EASTERN_TZ).date().isoformat(),
         "prediction_generated_at": pd.Timestamp.utcnow().isoformat(),
     }
-    MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.write_text(
+    DAILY_LAST_PREDICTION_PATH.write_text(
         json.dumps(failure_record, indent=2),
         encoding="utf-8",
     )
@@ -533,29 +558,20 @@ def write_failed_prediction_record(exc: Exception) -> None:
 
 def main() -> None:
     args = parse_args()
-    configure_market_hours_daily_paths()
-    tournament.log_step("Initialize ET market-hours daily BTC pipeline")
-    print(describe_window())
-
-    if not should_run_prediction_window():
-        print(
-            "Skipping ET market-hours daily pipeline: "
-            "the next target candle is outside 8am-8pm ET."
-        )
-        return
-
+    configure_daily_paths()
+    tournament.log_step("Initialize daily BTC pipeline")
     tournament.set_seed()
-    registered_model_name = configure_market_hours_daily_tracking()
+    registered_model_name = configure_daily_tracking()
     client = MlflowClient()
     _, train_df, valid_df, future_row = fetch_dataset()
 
+    midnight_refresh_due = should_refresh_daily_models()
     current_day_has_models = champions_trained_for_current_et_day(
         client,
         registered_model_name,
     )
-    training_window_open = should_run_training_window()
-    refresh_due = training_window_open and (args.force_refresh or not current_day_has_models)
-    print(f"Training window open: {str(training_window_open).lower()}")
+    refresh_due = args.force_refresh or midnight_refresh_due or not current_day_has_models
+    print(f"Midnight ET refresh due: {str(midnight_refresh_due).lower()}")
     print(f"Current ET day already has fresh champions: {str(current_day_has_models).lower()}")
     print(f"Daily model refresh due: {str(refresh_due).lower()}")
 
@@ -567,13 +583,6 @@ def main() -> None:
             train_df,
             valid_df,
             future_row,
-        )
-        return
-
-    if not current_day_has_models:
-        print(
-            "Skipping ET market-hours daily prediction: "
-            "no same-day champions are available and training is outside the allowed ET window."
         )
         return
 

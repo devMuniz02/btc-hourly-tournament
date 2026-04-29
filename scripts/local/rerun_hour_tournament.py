@@ -14,11 +14,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import run_local_pipeline
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.local import run_local_pipeline
+from src.btc_pipeline.path_config import HOURLY_LAST_PREDICTION_PATH
 
 
-ROOT = Path(__file__).resolve().parent
-LAST_PREDICTION_PATH = ROOT / "last_prediction.json"
+LAST_PREDICTION_PATH = HOURLY_LAST_PREDICTION_PATH
 BACKUP_PATH = ROOT / "last_prediction.before_rerun.json"
 
 
@@ -94,7 +98,7 @@ def main() -> int:
     run_local_pipeline.load_dotenv(ROOT / ".env")
     invalidate_current_hour_success()
 
-    command = [sys.executable, "run_local_pipeline.py", "--event-name", "schedule"]
+    command = [sys.executable, "scripts/local/run_local_pipeline.py", "--event-name", "schedule"]
     if args.skip_push:
         command.append("--skip-push")
     if args.skip_git:

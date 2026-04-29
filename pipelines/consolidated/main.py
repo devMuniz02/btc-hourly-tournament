@@ -22,9 +22,9 @@ import mlflow
 import pandas as pd
 from mlflow import MlflowClient
 
-import daily_main
-import main as tournament
-import market_hours_common
+from src.btc_pipeline import daily_main
+from src.btc_pipeline import main as tournament
+from src.btc_pipeline import market_hours_common
 
 from pipelines.consolidated import config, io, logging_utils
 
@@ -52,6 +52,7 @@ class ConsolidatedExecutionResult:
 class PendingConsolidatedPublish:
     base_registered_model_name: str
     now: pd.Timestamp
+    run_reference_time: pd.Timestamp
     track_states: dict[str, dict[str, Any]]
     track_decisions: dict[str, dict[str, dict[str, Any]]]
     raw_candles: pd.DataFrame
@@ -72,9 +73,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def configure_tracking() -> str:
+def configure_tracking(
+    reference_time: pd.Timestamp | None = None,
+) -> str:
     tournament.DEFAULT_EXPERIMENT_PREFIX = config.resolve_experiment_prefix()
-    tournament.configure_tracking()
+    tournament.configure_tracking(reference_time)
     return config.resolve_base_registered_model_name()
 
 
@@ -824,15 +827,24 @@ def execute_consolidated_workflow(
     args: argparse.Namespace,
     champion_download_root_base: Path | None = None,
     defer_promotion: bool = False,
+    reference_time: pd.Timestamp | None = None,
 ) -> ConsolidatedExecutionResult:
     config.ensure_output_dirs()
     tournament.set_seed()
     tournament.log_step("Initialize consolidated BTC workflow")
     print(market_hours_common.describe_window())
 
-    base_registered_model_name = configure_tracking()
+    run_reference_time = (
+        pd.Timestamp.now(tz="UTC") if reference_time is None else pd.Timestamp(reference_time)
+    )
+    if run_reference_time.tzinfo is None:
+        run_reference_time = run_reference_time.tz_localize("UTC")
+    else:
+        run_reference_time = run_reference_time.tz_convert("UTC")
+
+    base_registered_model_name = configure_tracking(run_reference_time)
     client = MlflowClient()
-    now = pd.Timestamp.now(tz="UTC")
+    now = run_reference_time
     raw, train_df, valid_df, future_row = fetch_dataset()
 
     tournament.log_step("Train challenger zoo once for all consolidated tracks")
@@ -963,6 +975,7 @@ def execute_consolidated_workflow(
             pending_publish = PendingConsolidatedPublish(
                 base_registered_model_name=base_registered_model_name,
                 now=now,
+                run_reference_time=run_reference_time,
                 track_states=track_states,
                 track_decisions=track_decisions,
                 raw_candles=raw,
@@ -1019,7 +1032,7 @@ def finalize_pending_publish(
     pending_publish: PendingConsolidatedPublish,
 ) -> ConsolidatedExecutionResult:
     config.ensure_output_dirs()
-    configured_name = configure_tracking()
+    configured_name = configure_tracking(pending_publish.run_reference_time)
     if configured_name != pending_publish.base_registered_model_name:
         print(
             "Configured consolidated model base differs from deferred publish payload. "

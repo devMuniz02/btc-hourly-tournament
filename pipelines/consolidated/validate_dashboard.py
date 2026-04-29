@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd
 
-import main as tournament
+from src.btc_pipeline import main as tournament
 from pipelines.consolidated import config, io
 
 
@@ -65,7 +65,7 @@ def load_standard_dashboard_module() -> ModuleType:
     if _STANDARD_DASHBOARD is not None:
         return _STANDARD_DASHBOARD
 
-    module_path = ROOT / "validate_dashboard.py"
+    module_path = ROOT / "src" / "btc_pipeline" / "validate_dashboard.py"
     spec = importlib.util.spec_from_file_location("shared_validate_dashboard", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load shared dashboard module from {module_path}.")

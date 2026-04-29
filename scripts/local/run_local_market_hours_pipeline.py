@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run the ET market-hours daily-refresh BTC pipeline locally with isolated artifacts.
+Run the ET market-hours BTC tournament locally with isolated artifacts.
 """
 
 from __future__ import annotations
@@ -15,17 +15,28 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 
-import artifact_sync
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.btc_pipeline import artifact_sync
+from src.btc_pipeline.path_config import (
+    MARKET_HOURS_DASHBOARD_PATH,
+    MARKET_HOURS_DASHBOARD_REVERSE_PATH,
+    MARKET_HOURS_HISTORY_PATH,
+    MARKET_HOURS_LAST_PREDICTION_PATH,
+    MARKET_HOURS_LOCAL_LOG_PATH,
+    ensure_btc_output_dirs,
+)
 
 
-ROOT = Path(__file__).resolve().parent
-LOG_PATH = ROOT / "local_market_hours_daily_pipeline_run.txt"
-LAST_PREDICTION_PATH = ROOT / "last_prediction_market_hours_daily.json"
+LOG_PATH = MARKET_HOURS_LOCAL_LOG_PATH
+LAST_PREDICTION_PATH = MARKET_HOURS_LAST_PREDICTION_PATH
 ARTIFACT_FILES = [
-    ROOT / "history_market_hours_daily.csv",
-    ROOT / "assets" / "dashboard_market_hours_daily.png",
-    ROOT / "assets" / "dashboard_market_hours_daily_reverse.png",
-    ROOT / "last_prediction_market_hours_daily.json",
+    MARKET_HOURS_HISTORY_PATH,
+    MARKET_HOURS_DASHBOARD_PATH,
+    MARKET_HOURS_DASHBOARD_REVERSE_PATH,
+    MARKET_HOURS_LAST_PREDICTION_PATH,
 ]
 NON_BLOCKING_LOCAL_FILES = [
     LOG_PATH,
@@ -161,14 +172,14 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
     if not args.skip_git:
         sync_with_origin_main()
 
-    validate_exit_code = run_python_script("validate_dashboard_market_hours_daily.py")
+    validate_exit_code = run_python_script("src/btc_pipeline/validate_dashboard_market_hours.py")
 
     run_tournament = should_run_tournament(args.event_name)
 
     if not args.skip_git:
-        committed = commit_artifacts("Local run: update BTC market-hours daily validation dashboard [skip ci]")
+        committed = commit_artifacts("Local run: update BTC market-hours validation dashboard [skip ci]")
         if committed and not args.skip_push and not run_tournament:
-            if not push_current_head("Local run: update BTC market-hours daily validation dashboard [skip ci]"):
+            if not push_current_head("Local run: update BTC market-hours validation dashboard [skip ci]"):
                 return 0, True
 
     if validate_exit_code != 0:
@@ -179,18 +190,16 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
         tournament_args: list[str] = []
         if args.reset_champion_from_challenger:
             tournament_args.append("--reset-champion-from-challenger")
-        if args.force_refresh:
-            tournament_args.append("--force-refresh")
-        tournament_exit_code = run_python_script("market_hours_daily_main.py", tournament_args)
-        refresh_exit_code = run_python_script("validate_dashboard_market_hours_daily.py")
+        tournament_exit_code = run_python_script("src/btc_pipeline/market_hours_main.py", tournament_args)
+        refresh_exit_code = run_python_script("src/btc_pipeline/validate_dashboard_market_hours.py")
         if refresh_exit_code != 0 and tournament_exit_code == 0:
             tournament_exit_code = refresh_exit_code
 
     if not args.skip_git:
         commit_message = (
-            "Local run: update BTC market-hours daily artifacts [skip ci]"
+            "Local run: update BTC market-hours artifacts [skip ci]"
             if run_tournament
-            else "Local run: update BTC market-hours daily validation dashboard [skip ci]"
+            else "Local run: update BTC market-hours validation dashboard [skip ci]"
         )
         committed = commit_artifacts(commit_message)
         if committed and not args.skip_push:
@@ -202,7 +211,7 @@ def run_pipeline_once(args: argparse.Namespace) -> tuple[int, bool]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the local BTC market-hours daily-refresh pipeline."
+        description="Run the local BTC market-hours tournament pipeline."
     )
     parser.add_argument(
         "--event-name",
@@ -225,15 +234,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore the current champion comparison and choose from the top challenger only.",
     )
-    parser.add_argument(
-        "--force-refresh",
-        action="store_true",
-        help="Force a same-day market-hours model refresh during an allowed ET training hour.",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("w", encoding="utf-8") as log_file:
         tee = Tee(sys.stdout, log_file)
         with redirect_stdout(tee), redirect_stderr(tee):
@@ -242,6 +247,7 @@ def main() -> int:
             args = parse_args()
             load_dotenv(ROOT / ".env")
             os.environ["BTC_EXCHANGE_MODE"] = "binance"
+            ensure_btc_output_dirs()
             validate_required_env()
             max_attempts = 2 if not args.skip_git and not args.skip_push else 1
             for attempt in range(1, max_attempts + 1):

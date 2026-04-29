@@ -47,7 +47,7 @@ jobs:
           test -n "$MLFLOW_TRACKING_PASSWORD"
 
       - name: Validate previous prediction and refresh daily dashboard
-        run: python validate_dashboard_daily.py
+        run: python src/btc_pipeline/validate_dashboard_daily.py
 
       - name: Decide whether to run this hour
         id: hourly_gate
@@ -59,8 +59,8 @@ jobs:
           fi
 
           expected_target=$(python -c "from datetime import datetime, timezone, timedelta; now=datetime.now(timezone.utc); target=now.replace(minute=0, second=0, microsecond=0)+timedelta(hours=1); print(target.isoformat())")
-          saved_target=$(python -c "import json; from pathlib import Path; path=Path('last_prediction_daily.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('target_candle_timestamp',''))")
-          saved_status=$(python -c "import json; from pathlib import Path; path=Path('last_prediction_daily.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('status',''))")
+          saved_target=$(python -c "import json; from pathlib import Path; path=Path('artifacts/btc/daily/last_prediction.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('target_candle_timestamp',''))")
+          saved_status=$(python -c "import json; from pathlib import Path; path=Path('artifacts/btc/daily/last_prediction.json'); data=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}; print(data.get('status',''))")
 
           echo "expected_target=$expected_target"
           echo "saved_target=$saved_target"
@@ -76,16 +76,16 @@ jobs:
       - name: Commit daily dashboard artifacts
         if: always() && steps.hourly_gate.outputs.run_tournament != 'true'
         run: |
-          if [ -f history_daily.csv ] || [ -f assets/dailydashboard.png ]; then
+          if [ -f artifacts/btc/daily/history.csv ] || [ -f assets/btc/daily/dashboard.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             tmpdir=$(mktemp -d)
             tracked_files=(
-              history_daily.csv
-              assets/dailydashboard.png
-              assets/dailydashboard_reverse.png
-              assets/dailydashboard_market_hours.png
-              assets/dailydashboard_market_hours_reverse.png
+              artifacts/btc/daily/history.csv
+              assets/btc/daily/dashboard.png
+              assets/btc/daily/dashboard_reverse.png
+              assets/btc/daily/dashboard_market_hours.png
+              assets/btc/daily/dashboard_market_hours_reverse.png
             )
             for file in "${tracked_files[@]}"; do
               if [ -f "$file" ]; then
@@ -127,26 +127,26 @@ jobs:
         id: tournament
         continue-on-error: true
         if: steps.hourly_gate.outputs.run_tournament == 'true'
-        run: python daily_main.py
+        run: python src/btc_pipeline/daily_main.py
 
       - name: Refresh daily dashboard with latest next prediction
         if: always() && steps.hourly_gate.outputs.run_tournament == 'true'
-        run: python validate_dashboard_daily.py
+        run: python src/btc_pipeline/validate_dashboard_daily.py
 
       - name: Commit daily prediction metadata
         if: always()
         run: |
-          if [ -f last_prediction_daily.json ] || [ -f history_daily.csv ] || [ -f assets/dailydashboard.png ]; then
+          if [ -f artifacts/btc/daily/last_prediction.json ] || [ -f artifacts/btc/daily/history.csv ] || [ -f assets/btc/daily/dashboard.png ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             tmpdir=$(mktemp -d)
             tracked_files=(
-              last_prediction_daily.json
-              history_daily.csv
-              assets/dailydashboard.png
-              assets/dailydashboard_reverse.png
-              assets/dailydashboard_market_hours.png
-              assets/dailydashboard_market_hours_reverse.png
+              artifacts/btc/daily/last_prediction.json
+              artifacts/btc/daily/history.csv
+              assets/btc/daily/dashboard.png
+              assets/btc/daily/dashboard_reverse.png
+              assets/btc/daily/dashboard_market_hours.png
+              assets/btc/daily/dashboard_market_hours_reverse.png
             )
             for file in "${tracked_files[@]}"; do
               if [ -f "$file" ]; then

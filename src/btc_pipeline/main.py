@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import sys
 
 import ccxt
 import joblib
@@ -36,6 +37,12 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.btc_pipeline.path_config import HOURLY_LAST_PREDICTION_PATH
+
 
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1h"
@@ -50,7 +57,7 @@ DEFAULT_EXPERIMENT_PREFIX = "btc"
 DEFAULT_MODEL_NAME = "btc-usdt-directional-classifier"
 ARTIFACT_SUBDIR = "packaged_model"
 MODEL_ARTIFACT_NAME = "model"
-LAST_PREDICTION_PATH = Path("last_prediction.json")
+LAST_PREDICTION_PATH = HOURLY_LAST_PREDICTION_PATH
 CHAMPION_ALIAS = "champion"
 CHAMPION_CACHE_METADATA_FILENAME = "_champion_cache.json"
 REGISTRATION_POLL_INTERVAL_SECONDS = 1.0
@@ -88,11 +95,20 @@ def get_env_str(name: str) -> str | None:
     return value or None
 
 
-def build_experiment_name() -> str:
-    now_utc = datetime.now(timezone.utc)
+def build_experiment_name(
+    now_utc: datetime | pd.Timestamp | str | None = None,
+) -> str:
+    if now_utc is None:
+        current_utc = pd.Timestamp.now(tz="UTC")
+    else:
+        current_utc = pd.Timestamp(now_utc)
+        if current_utc.tzinfo is None:
+            current_utc = current_utc.tz_localize("UTC")
+        else:
+            current_utc = current_utc.tz_convert("UTC")
     return (
         f"{DEFAULT_EXPERIMENT_PREFIX}-"
-        f"{now_utc.hour:02d}:00_{now_utc.day}_{now_utc.month}"
+        f"{current_utc.hour:02d}:00_{current_utc.day}_{current_utc.month}"
     )
 
 
@@ -107,7 +123,9 @@ def get_exchange_candidates() -> tuple[
     return BINANCE_CANDIDATES, BINANCE_US_CANDIDATE, FALLBACK_EXCHANGE_CANDIDATES
 
 
-def configure_tracking() -> str:
+def configure_tracking(
+    now_utc: datetime | pd.Timestamp | str | None = None,
+) -> str:
     tracking_uri = get_env_str("MLFLOW_TRACKING_URI")
     username = get_env_str("MLFLOW_TRACKING_USERNAME")
     password = get_env_str("MLFLOW_TRACKING_PASSWORD")
@@ -120,7 +138,7 @@ def configure_tracking() -> str:
         raise RuntimeError("MLFLOW_TRACKING_PASSWORD is required.")
 
     mlflow.set_tracking_uri(tracking_uri)
-    experiment_name = build_experiment_name()
+    experiment_name = build_experiment_name(now_utc)
     mlflow.set_experiment(experiment_name)
     print(f"Using MLflow experiment: {experiment_name} (UTC)")
     return get_env_str("MLFLOW_MODEL_NAME") or DEFAULT_MODEL_NAME
@@ -1379,7 +1397,7 @@ def promote_champion(
     promotion_payload, cache_hit = get_promotion_payload(candidate, feature_rows)
     prepare_seconds = time.perf_counter() - prepare_start
 
-    model_code_path = Path(__file__).with_name("mlflow_tournament_model.py")
+    model_code_path = Path(__file__).resolve().with_name("mlflow_tournament_model.py")
     active_run = mlflow.active_run()
     if active_run is None:
         raise RuntimeError("Champion promotion requires an active MLflow run.")

@@ -12,7 +12,9 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
+ARTIFACT_ROOT = ROOT / "artifacts" / "btc"
+BTC_HISTORY_PATH = ROOT / "data" / "btc" / "btc_history.csv"
 try:
     NEW_YORK_TZ = ZoneInfo("America/New_York")
 except ZoneInfoNotFoundError:
@@ -22,10 +24,10 @@ LIVE_PRICE_TRADING_FEE_RATE = 0.072
 LIVE_PRICE_MAKER_REBATE_RATE = 0.2
 
 WORKFLOW_DEFS = [
-    {"id": "hourly24", "label": "Hourly 24h", "file": "history.csv", "market_hours_native": False},
-    {"id": "daily24", "label": "Daily Model + Hourly 24h", "file": "history_daily.csv", "market_hours_native": False},
-    {"id": "marketHourly", "label": "Market Hours Hourly", "file": "history_market_hours.csv", "market_hours_native": True},
-    {"id": "marketDaily", "label": "Market Hours Daily Model", "file": "history_market_hours_daily.csv", "market_hours_native": True},
+    {"id": "hourly24", "label": "Hourly 24h", "file": str(Path("artifacts") / "btc" / "hourly" / "history.csv"), "market_hours_native": False},
+    {"id": "daily24", "label": "Daily Model + Hourly 24h", "file": str(Path("artifacts") / "btc" / "daily" / "history.csv"), "market_hours_native": False},
+    {"id": "marketHourly", "label": "Market Hours Hourly", "file": str(Path("artifacts") / "btc" / "market_hours" / "history.csv"), "market_hours_native": True},
+    {"id": "marketDaily", "label": "Market Hours Daily Model", "file": str(Path("artifacts") / "btc" / "market_hours_daily" / "history.csv"), "market_hours_native": True},
 ]
 
 VARIATIONS = [
@@ -273,7 +275,7 @@ def build_expanded_workflows(workflows: list[WorkflowStatus]) -> list[WorkflowSt
 
 
 def load_live_price_index() -> dict[tuple[int, int], dict[str, Any]]:
-    path = ROOT / "btc_history.csv"
+    path = BTC_HISTORY_PATH
     if not path.exists():
         return {}
     index: dict[tuple[int, int], dict[str, Any]] = {}

@@ -47,7 +47,7 @@ jobs:
           test -n "$MLFLOW_TRACKING_PASSWORD"
 
       - name: Run consolidated local-style pipeline
-        run: python run_local_consolidated_pipeline.py --event-name "${{ github.event_name }}"
+        run: python scripts/local/run_local_consolidated_pipeline.py --event-name "${{ github.event_name }}"
 
       - name: Final consolidated history backfill and dashboard refresh
         if: always()
