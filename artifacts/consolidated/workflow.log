@@ -1940,3 +1940,249 @@ Directional tournament scoreboard:
 [market_hours_daily] Skipped: next target candle is outside ET market hours
 🏃 View run btc-directional-consolidated at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2402/runs/59e5cd7546ae4813ae4712546a2baa04
 🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2402
+
+=== Initialize consolidated BTC workflow ===
+current_et=2026-05-02T04:27:02.145482-04:00 target_et=2026-05-02T05:00:00-04:00 train_hours=07:00-19:59 prediction_target_hours=08:00-20:59
+2026/05/02 08:27:03 INFO mlflow.tracking.fluent: Experiment with name 'btc-consolidated-08:00_2_5' does not exist. Creating a new experiment.
+Using MLflow experiment: btc-consolidated-08:00_2_5 (UTC)
+
+=== Fetch BTC/USDT market data ===
+Exchange attempt failed for binance BTC/USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {
+  "code": 0,
+  "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
+}
+Exchange attempt failed for binance BTC/USDT:USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {
+  "code": 0,
+  "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
+}
+Fetched 5000 candles from binanceus using BTC/USDT.
+
+=== Build features and dataset splits ===
+
+=== Train challenger zoo once for all consolidated tracks ===
+
+=== Prepare challenger datasets ===
+
+=== Run 5-fold time-series cross-validation ===
+Cross-validation fold 1/5
+  Fold 1: training RandomForest
+  Fold 1: training XGBoost
+  Fold 1: training MLPClassifier
+  Fold 1: training LSTM
+  Fold 1: training Transformer
+  Fold 1: training NN
+Cross-validation fold 2/5
+  Fold 2: training RandomForest
+  Fold 2: training XGBoost
+  Fold 2: training MLPClassifier
+  Fold 2: training LSTM
+  Fold 2: training Transformer
+  Fold 2: training NN
+Cross-validation fold 3/5
+  Fold 3: training RandomForest
+  Fold 3: training XGBoost
+  Fold 3: training MLPClassifier
+  Fold 3: training LSTM
+  Fold 3: training Transformer
+  Fold 3: training NN
+Cross-validation fold 4/5
+  Fold 4: training RandomForest
+  Fold 4: training XGBoost
+  Fold 4: training MLPClassifier
+  Fold 4: training LSTM
+  Fold 4: training Transformer
+  Fold 4: training NN
+Cross-validation fold 5/5
+  Fold 5: training RandomForest
+  Fold 5: training XGBoost
+  Fold 5: training MLPClassifier
+  Fold 5: training LSTM
+  Fold 5: training Transformer
+  Fold 5: training NN
+Training challenger: RandomForest
+Finished challenger: RandomForest
+Training challenger: XGBoost
+Finished challenger: XGBoost
+Training challenger: MLPClassifier
+Finished challenger: MLPClassifier
+Training challenger: LSTM
+Finished challenger: LSTM
+Training challenger: Transformer
+Finished challenger: Transformer
+Training challenger: NN
+Finished challenger: NN
+
+=== Evaluate challengers on validation window ===
+
+=== Retrain challengers on all labeled data ===
+Refitting challenger on full data: RandomForest
+Refitting challenger on full data: XGBoost
+Refitting challenger on full data: MLPClassifier
+Refitting challenger on full data: LSTM
+Refitting challenger on full data: Transformer
+Refitting challenger on full data: NN
+
+=== Checking workflows to eval ===
+Check time: next target is outside ET market hours.
+Skipping market-hours champion download/eval for workflows gated to ET market hours.
+Hourly 24h: queued for evaluation.
+Hourly 24h Daily: queued for evaluation.
+Market hours: skipped for evaluation (next target candle is outside ET market hours).
+Market hours Daily: skipped for evaluation (next target candle is outside ET market hours).
+
+=== Downloading all champions for workflows to eval ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Evaluating on val data ===
+
+=== Results of eval ===
+Family        | Challenger eval | Hourly 24h | Hourly 24h Daily
+--------------+-----------------+------------+-----------------
+RandomForest  | 0.596           | 0.455      | 0.455           
+XGBoost       | 0.667           | 0.935      | 0.935           
+MLPClassifier | 0.511           | 0.903      | 0.903           
+LSTM          | 0.465           | 0.737      | 0.737           
+Transformer   | 0.778           | 0.794      | 0.794           
+NN            | 0.758           | 0.815      | 0.815           
+
+=== Checking workflows to promote ===
+Check daily model champion (if daily champion is not available, promote when challenger wins).
+
+=== Uploading/promoting models for challenger that defeated champions ===
+RandomForest
+Hourly 24h: Promoting new champion
+Hourly 24h Daily: Promoting new champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+XGBoost
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+MLPClassifier
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+LSTM
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+Transformer
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+NN
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Skipped (next target candle is outside ET market hours)
+Market hours Daily: Skipped (next target candle is outside ET market hours)
+
+=== Promote new champion: RandomForest (champion) ===
+2026/05/02 08:41:42 INFO mlflow.pyfunc: Validating input example against model signature
+2026/05/02 08:41:43 WARNING mlflow.utils.requirements_utils: Detected one or more mismatches between the model's dependencies and the current Python environment:
+ - mlflow (current: 3.11.1, required: mlflow==3.10.1)
+ - torch (current: 2.11.0, required: torch==2.10.0)
+To fix the mismatches, call `mlflow.pyfunc.get_model_dependencies(model_uri)` to fetch the model's environment and install dependencies using the resulting environment file.
+2026/05/02 08:41:43 WARNING mlflow.utils.requirements_utils: Detected one or more mismatches between the model's dependencies and the current Python environment:
+ - mlflow (current: 3.11.1, required: mlflow==3.10.1)
+ - torch (current: 2.11.0, required: torch==2.10.0)
+To fix the mismatches, call `mlflow.pyfunc.get_model_dependencies(model_uri)` to fetch the model's environment and install dependencies using the resulting environment file.
+Registered model 'btc-usdt-directional-classifier-consolidated-hourly-24h-rf' already exists. Creating a new version of this model...
+Created version '2' of model 'btc-usdt-directional-classifier-consolidated-hourly-24h-rf'.
+Promotion payload cache: miss for rf
+Promotion payload prep: 0.32s
+Promotion log_model: 18.27s
+Promotion version lookup: 1.07s
+Promotion registry updates: 9.93s
+Promotion total: 29.78s
+[hourly_24h] RandomForest -> promoted to btc-usdt-directional-classifier-consolidated-hourly-24h-rf version 2
+[hourly_24h] XGBoost retained for btc-usdt-directional-classifier-consolidated-hourly-24h-xgb version 2
+[hourly_24h] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-hourly-24h-mlp_sklearn version 2
+[hourly_24h] LSTM retained for btc-usdt-directional-classifier-consolidated-hourly-24h-lstm version 3
+[hourly_24h] Transformer retained for btc-usdt-directional-classifier-consolidated-hourly-24h-transformer version 3
+[hourly_24h] NN retained for btc-usdt-directional-classifier-consolidated-hourly-24h-nn version 2
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.935 Accuracy=0.917 Next=0.548 UP
+2. MLPClassifier [champion] F1=0.903 Accuracy=0.875 Next=0.516 UP
+3. NN [champion] F1=0.815 Accuracy=0.792 Next=0.356 DOWN
+4. Transformer [champion] F1=0.794 Accuracy=0.729 Next=0.618 UP
+5. Transformer [challenger] F1=0.778 Accuracy=0.667 Next=0.478 DOWN
+6. NN [challenger] F1=0.758 Accuracy=0.667 Next=0.895 UP
+7. LSTM [champion] F1=0.737 Accuracy=0.688 Next=0.534 UP
+8. XGBoost [challenger] F1=0.667 Accuracy=0.604 Next=0.691 UP
+9. RandomForest [champion] F1=0.596 Accuracy=0.604 Next=0.589 UP
+10. MLPClassifier [challenger] F1=0.511 Accuracy=0.521 Next=0.204 DOWN
+11. LSTM [challenger] F1=0.465 Accuracy=0.521 Next=0.826 UP
+12. RandomForest [champion] F1=0.455 Accuracy=0.500 Next=0.551 UP
+🏃 View run btc-directional-consolidated-hourly_24h at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403/runs/30adcf12d7694e58aa8cba6fc756e9ef
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403
+
+=== Promote new champion: RandomForest (champion) ===
+2026/05/02 08:42:29 INFO mlflow.pyfunc: Validating input example against model signature
+2026/05/02 08:42:29 WARNING mlflow.utils.requirements_utils: Detected one or more mismatches between the model's dependencies and the current Python environment:
+ - mlflow (current: 3.11.1, required: mlflow==3.10.1)
+ - torch (current: 2.11.0, required: torch==2.10.0)
+To fix the mismatches, call `mlflow.pyfunc.get_model_dependencies(model_uri)` to fetch the model's environment and install dependencies using the resulting environment file.
+2026/05/02 08:42:29 WARNING mlflow.utils.requirements_utils: Detected one or more mismatches between the model's dependencies and the current Python environment:
+ - mlflow (current: 3.11.1, required: mlflow==3.10.1)
+ - torch (current: 2.11.0, required: torch==2.10.0)
+To fix the mismatches, call `mlflow.pyfunc.get_model_dependencies(model_uri)` to fetch the model's environment and install dependencies using the resulting environment file.
+Registered model 'btc-usdt-directional-classifier-consolidated-hourly-daily-rf' already exists. Creating a new version of this model...
+Created version '2' of model 'btc-usdt-directional-classifier-consolidated-hourly-daily-rf'.
+Promotion payload cache: hit for rf
+Promotion payload prep: 0.00s
+Promotion log_model: 26.00s
+Promotion version lookup: 1.07s
+Promotion registry updates: 9.94s
+Promotion total: 39.00s
+[hourly_daily] RandomForest -> promoted to btc-usdt-directional-classifier-consolidated-hourly-daily-rf version 2
+[hourly_daily] XGBoost retained for btc-usdt-directional-classifier-consolidated-hourly-daily-xgb version 2
+[hourly_daily] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-hourly-daily-mlp_sklearn version 2
+[hourly_daily] LSTM retained for btc-usdt-directional-classifier-consolidated-hourly-daily-lstm version 3
+[hourly_daily] Transformer retained for btc-usdt-directional-classifier-consolidated-hourly-daily-transformer version 3
+[hourly_daily] NN retained for btc-usdt-directional-classifier-consolidated-hourly-daily-nn version 2
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.935 Accuracy=0.917 Next=0.548 UP
+2. MLPClassifier [champion] F1=0.903 Accuracy=0.875 Next=0.516 UP
+3. NN [champion] F1=0.815 Accuracy=0.792 Next=0.356 DOWN
+4. Transformer [champion] F1=0.794 Accuracy=0.729 Next=0.618 UP
+5. Transformer [challenger] F1=0.778 Accuracy=0.667 Next=0.478 DOWN
+6. NN [challenger] F1=0.758 Accuracy=0.667 Next=0.895 UP
+7. LSTM [champion] F1=0.737 Accuracy=0.688 Next=0.534 UP
+8. XGBoost [challenger] F1=0.667 Accuracy=0.604 Next=0.691 UP
+9. RandomForest [champion] F1=0.596 Accuracy=0.604 Next=0.589 UP
+10. MLPClassifier [challenger] F1=0.511 Accuracy=0.521 Next=0.204 DOWN
+11. LSTM [challenger] F1=0.465 Accuracy=0.521 Next=0.826 UP
+12. RandomForest [champion] F1=0.455 Accuracy=0.500 Next=0.551 UP
+🏃 View run btc-directional-consolidated-hourly_daily at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403/runs/ffa2f54379ad48f39e6eecc046e4a2d2
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403
+[market_hours] Skipped: next target candle is outside ET market hours
+[market_hours_daily] Skipped: next target candle is outside ET market hours
+🏃 View run btc-directional-consolidated at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403/runs/86ae3bb9999d44e8a6907f01d3726921
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2403
