@@ -17383,3 +17383,274 @@ Directional tournament scoreboard:
 🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2453
 🏃 View run btc-directional-consolidated at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2453/runs/025cb3ffbb1245d1a7a27e20bf742054
 🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2453
+
+=== Initialize consolidated BTC workflow ===
+current_et=2026-05-06T14:25:56.940070-04:00 target_et=2026-05-06T15:00:00-04:00 train_hours=07:00-19:59 prediction_target_hours=08:00-20:59
+2026/05/06 18:25:57 INFO mlflow.tracking.fluent: Experiment with name 'btc-consolidated-18:00_6_5' does not exist. Creating a new experiment.
+Using MLflow experiment: btc-consolidated-18:00_6_5 (UTC)
+
+=== Fetch BTC/USDT market data ===
+Exchange attempt failed for binance BTC/USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {
+  "code": 0,
+  "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
+}
+Exchange attempt failed for binance BTC/USDT:USDT: binance GET https://api.binance.com/api/v3/exchangeInfo 451  {
+  "code": 0,
+  "msg": "Service unavailable from a restricted location according to 'b. Eligibility' in https://www.binance.com/en/terms. Please contact customer service if you believe you received this message in error."
+}
+Fetched 5000 candles from binanceus using BTC/USDT.
+
+=== Build features and dataset splits ===
+
+=== Train challenger zoo once for all consolidated tracks ===
+
+=== Prepare challenger datasets ===
+
+=== Run 5-fold time-series cross-validation ===
+Cross-validation fold 1/5
+  Fold 1: training RandomForest
+  Fold 1: training XGBoost
+  Fold 1: training MLPClassifier
+  Fold 1: training LSTM
+  Fold 1: training Transformer
+  Fold 1: training NN
+Cross-validation fold 2/5
+  Fold 2: training RandomForest
+  Fold 2: training XGBoost
+  Fold 2: training MLPClassifier
+  Fold 2: training LSTM
+  Fold 2: training Transformer
+  Fold 2: training NN
+Cross-validation fold 3/5
+  Fold 3: training RandomForest
+  Fold 3: training XGBoost
+  Fold 3: training MLPClassifier
+  Fold 3: training LSTM
+  Fold 3: training Transformer
+  Fold 3: training NN
+Cross-validation fold 4/5
+  Fold 4: training RandomForest
+  Fold 4: training XGBoost
+  Fold 4: training MLPClassifier
+  Fold 4: training LSTM
+  Fold 4: training Transformer
+  Fold 4: training NN
+Cross-validation fold 5/5
+  Fold 5: training RandomForest
+  Fold 5: training XGBoost
+  Fold 5: training MLPClassifier
+  Fold 5: training LSTM
+  Fold 5: training Transformer
+  Fold 5: training NN
+Training challenger: RandomForest
+Finished challenger: RandomForest
+Training challenger: XGBoost
+Finished challenger: XGBoost
+Training challenger: MLPClassifier
+Finished challenger: MLPClassifier
+Training challenger: LSTM
+Finished challenger: LSTM
+Training challenger: Transformer
+Finished challenger: Transformer
+Training challenger: NN
+Finished challenger: NN
+
+=== Evaluate challengers on validation window ===
+
+=== Retrain challengers on all labeled data ===
+Refitting challenger on full data: RandomForest
+Refitting challenger on full data: XGBoost
+Refitting challenger on full data: MLPClassifier
+Refitting challenger on full data: LSTM
+Refitting challenger on full data: Transformer
+Refitting challenger on full data: NN
+
+=== Checking workflows to eval ===
+Check time: next target is inside ET market hours.
+Hourly 24h: queued for evaluation.
+Hourly 24h Daily: queued for evaluation.
+Market hours: queued for evaluation.
+Market hours Daily: queued for evaluation.
+
+=== Downloading all champions for workflows to eval ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Load current champion from MLflow (champion) ===
+
+=== Evaluating on val data ===
+
+=== Results of eval ===
+Family        | Challenger eval | Hourly 24h | Hourly 24h Daily | Market hours | Market hours Daily
+--------------+-----------------+------------+------------------+--------------+-------------------
+RandomForest  | 0.353           | 0.300      | 0.300            | 0.318        | 0.318             
+XGBoost       | 0.409           | 0.830      | 0.830            | 0.830        | 0.830             
+MLPClassifier | 0.182           | 0.526      | 0.526            | 0.526        | 0.526             
+LSTM          | 0.294           | 0.468      | 0.468            | 0.468        | 0.468             
+Transformer   | 0.533           | 0.582      | 0.582            | 0.582        | 0.582             
+NN            | 0.308           | 0.830      | 0.830            | 0.830        | 0.830             
+
+=== Checking workflows to promote ===
+Check daily model champion (if daily champion is not available, promote when challenger wins).
+
+=== Uploading/promoting models for challenger that defeated champions ===
+RandomForest
+Hourly 24h: Blocked by null-model guard
+Hourly 24h Daily: Blocked by null-model guard
+Market hours: Blocked by null-model guard
+Market hours Daily: Blocked by null-model guard
+XGBoost
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Keeping current champion
+Market hours Daily: Keeping current champion
+MLPClassifier
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Keeping current champion
+Market hours Daily: Keeping current champion
+LSTM
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Keeping current champion
+Market hours Daily: Keeping current champion
+Transformer
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Keeping current champion
+Market hours Daily: Keeping current champion
+NN
+Hourly 24h: Keeping current champion
+Hourly 24h Daily: Keeping current champion
+Market hours: Keeping current champion
+Market hours Daily: Keeping current champion
+[hourly_24h] RandomForest retained for btc-usdt-directional-classifier-consolidated-hourly-24h-rf version 2
+[hourly_24h] XGBoost retained for btc-usdt-directional-classifier-consolidated-hourly-24h-xgb version 4
+[hourly_24h] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-hourly-24h-mlp_sklearn version 3
+[hourly_24h] LSTM retained for btc-usdt-directional-classifier-consolidated-hourly-24h-lstm version 9
+[hourly_24h] Transformer retained for btc-usdt-directional-classifier-consolidated-hourly-24h-transformer version 17
+[hourly_24h] NN retained for btc-usdt-directional-classifier-consolidated-hourly-24h-nn version 6
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.830 Accuracy=0.812 Next=0.574 UP
+2. NN [champion] F1=0.830 Accuracy=0.812 Next=0.270 DOWN
+3. Transformer [champion] F1=0.582 Accuracy=0.521 Next=0.262 DOWN
+4. Transformer [challenger] F1=0.533 Accuracy=0.417 Next=0.105 DOWN
+5. MLPClassifier [champion] F1=0.526 Accuracy=0.438 Next=0.953 UP
+6. LSTM [champion] F1=0.468 Accuracy=0.479 Next=0.490 DOWN
+7. XGBoost [challenger] F1=0.409 Accuracy=0.458 Next=0.555 UP
+8. RandomForest [challenger] F1=0.353 Accuracy=0.542 Next=0.520 UP
+9. NN [challenger] F1=0.308 Accuracy=0.438 Next=0.106 DOWN
+10. RandomForest [champion] F1=0.300 Accuracy=0.417 Next=0.516 UP
+11. LSTM [challenger] F1=0.294 Accuracy=0.500 Next=0.052 DOWN
+12. MLPClassifier [challenger] F1=0.182 Accuracy=0.438 Next=0.463 DOWN
+🏃 View run btc-directional-consolidated-hourly_24h at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454/runs/00d4a676ceb74c5993f85b8438e1abf7
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454
+[hourly_daily] RandomForest retained for btc-usdt-directional-classifier-consolidated-hourly-daily-rf version 2
+[hourly_daily] XGBoost retained for btc-usdt-directional-classifier-consolidated-hourly-daily-xgb version 4
+[hourly_daily] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-hourly-daily-mlp_sklearn version 3
+[hourly_daily] LSTM retained for btc-usdt-directional-classifier-consolidated-hourly-daily-lstm version 9
+[hourly_daily] Transformer retained for btc-usdt-directional-classifier-consolidated-hourly-daily-transformer version 17
+[hourly_daily] NN retained for btc-usdt-directional-classifier-consolidated-hourly-daily-nn version 6
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.830 Accuracy=0.812 Next=0.574 UP
+2. NN [champion] F1=0.830 Accuracy=0.812 Next=0.270 DOWN
+3. Transformer [champion] F1=0.582 Accuracy=0.521 Next=0.262 DOWN
+4. Transformer [challenger] F1=0.533 Accuracy=0.417 Next=0.105 DOWN
+5. MLPClassifier [champion] F1=0.526 Accuracy=0.438 Next=0.953 UP
+6. LSTM [champion] F1=0.468 Accuracy=0.479 Next=0.490 DOWN
+7. XGBoost [challenger] F1=0.409 Accuracy=0.458 Next=0.555 UP
+8. RandomForest [challenger] F1=0.353 Accuracy=0.542 Next=0.520 UP
+9. NN [challenger] F1=0.308 Accuracy=0.438 Next=0.106 DOWN
+10. RandomForest [champion] F1=0.300 Accuracy=0.417 Next=0.516 UP
+11. LSTM [challenger] F1=0.294 Accuracy=0.500 Next=0.052 DOWN
+12. MLPClassifier [challenger] F1=0.182 Accuracy=0.438 Next=0.463 DOWN
+🏃 View run btc-directional-consolidated-hourly_daily at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454/runs/241cba4b50ef4db9a11baa4f3fe79ea9
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454
+[market_hours] RandomForest retained for btc-usdt-directional-classifier-consolidated-market-hours-rf version 3
+[market_hours] XGBoost retained for btc-usdt-directional-classifier-consolidated-market-hours-xgb version 4
+[market_hours] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-market-hours-mlp_sklearn version 3
+[market_hours] LSTM retained for btc-usdt-directional-classifier-consolidated-market-hours-lstm version 9
+[market_hours] Transformer retained for btc-usdt-directional-classifier-consolidated-market-hours-transformer version 16
+[market_hours] NN retained for btc-usdt-directional-classifier-consolidated-market-hours-nn version 5
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.830 Accuracy=0.812 Next=0.574 UP
+2. NN [champion] F1=0.830 Accuracy=0.812 Next=0.270 DOWN
+3. Transformer [champion] F1=0.582 Accuracy=0.521 Next=0.262 DOWN
+4. Transformer [challenger] F1=0.533 Accuracy=0.417 Next=0.105 DOWN
+5. MLPClassifier [champion] F1=0.526 Accuracy=0.438 Next=0.953 UP
+6. LSTM [champion] F1=0.468 Accuracy=0.479 Next=0.490 DOWN
+7. XGBoost [challenger] F1=0.409 Accuracy=0.458 Next=0.555 UP
+8. RandomForest [challenger] F1=0.353 Accuracy=0.542 Next=0.520 UP
+9. RandomForest [champion] F1=0.318 Accuracy=0.375 Next=0.518 UP
+10. NN [challenger] F1=0.308 Accuracy=0.438 Next=0.106 DOWN
+11. LSTM [challenger] F1=0.294 Accuracy=0.500 Next=0.052 DOWN
+12. MLPClassifier [challenger] F1=0.182 Accuracy=0.438 Next=0.463 DOWN
+🏃 View run btc-directional-consolidated-market_hours at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454/runs/cca4a361a52d4fbdb7312cf7fe7a2c05
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454
+[market_hours_daily] RandomForest retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-rf version 3
+[market_hours_daily] XGBoost retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-xgb version 4
+[market_hours_daily] MLPClassifier retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-mlp_sklearn version 3
+[market_hours_daily] LSTM retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-lstm version 9
+[market_hours_daily] Transformer retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-transformer version 16
+[market_hours_daily] NN retained for btc-usdt-directional-classifier-consolidated-market-hours-daily-nn version 5
+Directional tournament scoreboard:
+1. XGBoost [champion] F1=0.830 Accuracy=0.812 Next=0.574 UP
+2. NN [champion] F1=0.830 Accuracy=0.812 Next=0.270 DOWN
+3. Transformer [champion] F1=0.582 Accuracy=0.521 Next=0.262 DOWN
+4. Transformer [challenger] F1=0.533 Accuracy=0.417 Next=0.105 DOWN
+5. MLPClassifier [champion] F1=0.526 Accuracy=0.438 Next=0.953 UP
+6. LSTM [champion] F1=0.468 Accuracy=0.479 Next=0.490 DOWN
+7. XGBoost [challenger] F1=0.409 Accuracy=0.458 Next=0.555 UP
+8. RandomForest [challenger] F1=0.353 Accuracy=0.542 Next=0.520 UP
+9. RandomForest [champion] F1=0.318 Accuracy=0.375 Next=0.518 UP
+10. NN [challenger] F1=0.308 Accuracy=0.438 Next=0.106 DOWN
+11. LSTM [challenger] F1=0.294 Accuracy=0.500 Next=0.052 DOWN
+12. MLPClassifier [challenger] F1=0.182 Accuracy=0.438 Next=0.463 DOWN
+🏃 View run btc-directional-consolidated-market_hours_daily at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454/runs/865c9a13db3b4f939b7b15115e04420f
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454
+🏃 View run btc-directional-consolidated at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454/runs/b59585514342455da12bb737b7ca1b55
+🧪 View experiment at: https://dagshub.com/devMuniz02/btc-hourly-tournament.mlflow/#/experiments/2454
