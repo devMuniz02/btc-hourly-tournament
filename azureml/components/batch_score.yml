@@ -1,0 +1,21 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: btc_batch_score
+version: 1
+type: command
+display_name: BTC Batch Score
+description: Produce the next BTC direction prediction from the packaged champion.
+inputs:
+  prepared_data:
+    type: uri_folder
+  model_dir:
+    type: uri_folder
+outputs:
+  prediction_file:
+    type: uri_file
+code: ../../
+environment: azureml:btc-azure-mlops-env:3
+command: >-
+  python -m src.btc_pipeline.azureml_jobs.batch_score
+  --input-dir ${{inputs.prepared_data}}
+  --model-dir ${{inputs.model_dir}}
+  --output-path ${{outputs.prediction_file}}

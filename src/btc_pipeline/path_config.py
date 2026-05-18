@@ -5,12 +5,14 @@ Shared filesystem paths for BTC workflow/runtime modules.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
-ASSETS_DIR = PROJECT_ROOT / "assets"
+RUNTIME_ROOT = Path(os.getenv("BTC_RUNTIME_ROOT", PROJECT_ROOT))
+ARTIFACTS_DIR = Path(os.getenv("BTC_ARTIFACTS_DIR", RUNTIME_ROOT / "artifacts"))
+ASSETS_DIR = Path(os.getenv("BTC_ASSETS_DIR", RUNTIME_ROOT / "assets"))
 BTC_ARTIFACTS_DIR = ARTIFACTS_DIR / "btc"
 BTC_ASSETS_DIR = ASSETS_DIR / "btc"
 LOCAL_LOGS_DIR = ARTIFACTS_DIR / "logs" / "local"
@@ -53,6 +55,10 @@ HOURLY_LOCAL_LOG_PATH = LOCAL_LOGS_DIR / "local_pipeline_run.txt"
 MARKET_HOURS_LOCAL_LOG_PATH = LOCAL_LOGS_DIR / "local_market_hours_pipeline_run.txt"
 MARKET_HOURS_DAILY_LOCAL_LOG_PATH = LOCAL_LOGS_DIR / "local_market_hours_daily_pipeline_run.txt"
 CONSOLIDATED_LOCAL_LOG_PATH = LOCAL_LOGS_DIR / "local_consolidated_pipeline_run.txt"
+
+
+def runtime_mode() -> str:
+    return os.getenv("BTC_RUNTIME_MODE", "local").strip().lower() or "local"
 
 
 def ensure_btc_output_dirs() -> None:

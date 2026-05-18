@@ -1,0 +1,31 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: btc_register_model
+version: 1
+type: command
+display_name: BTC Register Model
+description: Register the packaged BTC model in MLflow-backed Azure ML registry/workspace.
+inputs:
+  prepared_data:
+    type: uri_folder
+  model_dir:
+    type: uri_folder
+  evaluation_file:
+    type: uri_file
+  registered_model_name:
+    type: string
+  experiment_name:
+    type: string
+    default: btc-azure-mlops
+outputs:
+  registration_file:
+    type: uri_file
+code: ../../
+environment: azureml:btc-azure-mlops-env:3
+command: >-
+  python -m src.btc_pipeline.azureml_jobs.register_model
+  --input-dir ${{inputs.prepared_data}}
+  --model-dir ${{inputs.model_dir}}
+  --evaluation-path ${{inputs.evaluation_file}}
+  --registration-path ${{outputs.registration_file}}
+  --registered-model-name ${{inputs.registered_model_name}}
+  --experiment-name ${{inputs.experiment_name}}

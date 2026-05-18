@@ -1,0 +1,26 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: btc-azure-mlops-env
+version: 3
+description: Azure ML runtime for the BTC direction MLOps portfolio project.
+image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+conda_file:
+  channels:
+    - conda-forge
+  dependencies:
+    - python=3.11
+    - pip
+    - pip:
+        - azure-ai-ml
+        - azure-identity
+        - azureml-inference-server-http
+        - azureml-mlflow
+        - ccxt
+        - joblib
+        - matplotlib
+        - mlflow==2.22.1
+        - numpy
+        - pandas
+        - python-dotenv
+        - scikit-learn==1.8.0
+        - torch
+        - xgboost

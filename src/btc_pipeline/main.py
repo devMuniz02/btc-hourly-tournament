@@ -74,6 +74,8 @@ FALLBACK_EXCHANGE_CANDIDATES = [
     ("kucoin", "BTC/USDT", {}),
     ("bitfinex", "BTC/USDT", {}),
 ]
+CACHE_REFRESH_OVERLAP_HOURS = 72
+CACHE_RETENTION_BUFFER_HOURS = 24 * 14
 
 
 def log_step(message: str) -> None:
@@ -150,10 +152,82 @@ def fetch_ohlcv(
     retry_binanceus: bool = False,
     retry_binanceus_attempts: int = 3,
     retry_interval_seconds: int = 60,
+    cache_path: str | Path | None = None,
 ) -> pd.DataFrame:
     failures: list[str] = []
     required_candles = min_candles if min_candles is not None else limit
     primary_candidates, secondary_candidate, fallback_candidates = get_exchange_candidates()
+
+    def normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        normalized = (
+            frame.drop_duplicates(subset=["timestamp"], keep="last")
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
+        return normalized
+
+    def frame_from_candles(candles: list[list[Any]]) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        )
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
+        return normalize_frame(frame)
+
+    def read_cached_frame(path: str | Path | None) -> pd.DataFrame | None:
+        if path is None:
+            return None
+        resolved = Path(path)
+        if not resolved.exists():
+            return None
+        try:
+            cached = pd.read_csv(resolved, parse_dates=["timestamp"])
+        except Exception:
+            return None
+        if cached.empty or "timestamp" not in cached.columns:
+            return None
+        if cached["timestamp"].dt.tz is None:
+            cached["timestamp"] = cached["timestamp"].dt.tz_localize("UTC")
+        else:
+            cached["timestamp"] = cached["timestamp"].dt.tz_convert("UTC")
+        return normalize_frame(cached)
+
+    def write_cached_frame(frame: pd.DataFrame, path: str | Path | None) -> None:
+        if path is None:
+            return
+        resolved = Path(path)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(resolved, index=False)
+
+    def trim_cached_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        keep_rows = max(limit, required_candles) + CACHE_RETENTION_BUFFER_HOURS
+        if len(frame) <= keep_rows:
+            return frame
+        return frame.tail(keep_rows).reset_index(drop=True)
+
+    def fetch_frame(
+        exchange: Any,
+        symbol: str,
+        *,
+        fetch_limit: int,
+        since_ms: int | None = None,
+    ) -> pd.DataFrame:
+        fetch_params: dict[str, Any] = {}
+        if fetch_limit > 1000 and since_ms is None:
+            fetch_params = {
+                "paginate": True,
+                "paginationCalls": math.ceil(fetch_limit / 1000),
+            }
+        candles = exchange.fetch_ohlcv(
+            symbol,
+            timeframe=TIMEFRAME,
+            since=since_ms,
+            limit=fetch_limit,
+            params=fetch_params,
+        )
+        if not candles:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+        return frame_from_candles(candles)
 
     def try_exchange(
         exchange_id: str,
@@ -168,27 +242,38 @@ def fetch_ohlcv(
                 **extra_config,
             }
         )
-        fetch_params: dict[str, Any] = {}
-        if limit > 1000:
-            fetch_params = {
-                "paginate": True,
-                "paginationCalls": math.ceil(limit / 1000),
-            }
-        candles = exchange.fetch_ohlcv(
-            symbol,
-            timeframe=TIMEFRAME,
-            limit=limit,
-            params=fetch_params,
-        )
-        if len(candles) < required_candles:
-            raise RuntimeError(
-                f"{exchange_id} returned too few candles ({len(candles)})."
+        cached = read_cached_frame(cache_path)
+        if cached is not None and len(cached) >= required_candles:
+            overlap_rows = min(len(cached), CACHE_REFRESH_OVERLAP_HOURS)
+            refresh_start = cached.iloc[-overlap_rows]["timestamp"]
+            refreshed_tail = fetch_frame(
+                exchange,
+                symbol,
+                fetch_limit=limit + CACHE_REFRESH_OVERLAP_HOURS,
+                since_ms=int(refresh_start.timestamp() * 1000),
             )
-        frame = pd.DataFrame(
-            candles,
-            columns=["timestamp", "open", "high", "low", "close", "volume"],
-        )
-        frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="ms", utc=True)
+            if not refreshed_tail.empty:
+                preserved_head = cached[cached["timestamp"] < refresh_start].copy()
+                merged = normalize_frame(pd.concat([preserved_head, refreshed_tail], ignore_index=True))
+                merged = trim_cached_frame(merged)
+                write_cached_frame(merged, cache_path)
+                final_frame = merged.tail(limit).reset_index(drop=True)
+                if len(final_frame) < required_candles:
+                    raise RuntimeError(
+                        f"{exchange_id} cache refresh returned too few candles ({len(final_frame)})."
+                    )
+                print(
+                    f"Fetched {len(refreshed_tail)} incremental candles from {exchange_id} using {symbol} "
+                    f"and reused {len(cached) - overlap_rows} cached rows."
+                )
+                return final_frame
+
+        frame = fetch_frame(exchange, symbol, fetch_limit=limit)
+        if len(frame) < required_candles:
+            raise RuntimeError(
+                f"{exchange_id} returned too few candles ({len(frame)})."
+            )
+        write_cached_frame(trim_cached_frame(frame), cache_path)
         print(f"Fetched {len(frame)} candles from {exchange_id} using {symbol}.")
         return frame
 
@@ -1143,7 +1228,7 @@ def build_model_logging_inputs(
 
 def build_model_pip_requirements() -> list[str]:
     return [
-        "mlflow==3.10.1",
+        "mlflow==2.22.1",
         "pandas",
         "numpy",
         "joblib",

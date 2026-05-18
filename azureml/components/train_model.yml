@@ -1,0 +1,21 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: btc_train_model
+version: 1
+type: command
+display_name: BTC Train Model
+description: Train the challenger zoo and package the best model.
+inputs:
+  prepared_data:
+    type: uri_folder
+outputs:
+  model_dir:
+    type: uri_folder
+  metrics_file:
+    type: uri_file
+code: ../../
+environment: azureml:btc-azure-mlops-env:3
+command: >-
+  python -m src.btc_pipeline.azureml_jobs.train_model
+  --input-dir ${{inputs.prepared_data}}
+  --model-dir ${{outputs.model_dir}}
+  --metrics-path ${{outputs.metrics_file}}

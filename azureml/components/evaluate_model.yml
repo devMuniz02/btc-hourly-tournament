@@ -1,0 +1,21 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: btc_evaluate_model
+version: 1
+type: command
+display_name: BTC Evaluate Model
+description: Evaluate the packaged model on the validation window.
+inputs:
+  prepared_data:
+    type: uri_folder
+  model_dir:
+    type: uri_folder
+outputs:
+  evaluation_file:
+    type: uri_file
+code: ../../
+environment: azureml:btc-azure-mlops-env:3
+command: >-
+  python -m src.btc_pipeline.azureml_jobs.evaluate_model
+  --input-dir ${{inputs.prepared_data}}
+  --model-dir ${{inputs.model_dir}}
+  --evaluation-path ${{outputs.evaluation_file}}

@@ -1,0 +1,48 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+display_name: btc-azure-mlops-train-register-score
+description: End-to-end Azure ML v2 pipeline for BTC direction training, evaluation, registration, and scoring.
+experiment_name: btc-azure-mlops
+settings:
+  default_compute: azureml:btc-cpu-cluster
+inputs:
+  lookback_hours: 5000
+  validation_hours: 48
+  registered_model_name: btc-direction-model
+jobs:
+  prepare_data:
+    type: command
+    component: ../components/prepare_data.yml
+    inputs:
+      lookback_hours: ${{parent.inputs.lookback_hours}}
+      validation_hours: ${{parent.inputs.validation_hours}}
+    outputs:
+      cache_dir:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/btc-mlops/raw-cache/
+  train_model:
+    type: command
+    component: ../components/train_model.yml
+    inputs:
+      prepared_data: ${{parent.jobs.prepare_data.outputs.prepared_data}}
+  evaluate_model:
+    type: command
+    component: ../components/evaluate_model.yml
+    inputs:
+      prepared_data: ${{parent.jobs.prepare_data.outputs.prepared_data}}
+      model_dir: ${{parent.jobs.train_model.outputs.model_dir}}
+  register_model:
+    type: command
+    component: ../components/register_model.yml
+    inputs:
+      prepared_data: ${{parent.jobs.prepare_data.outputs.prepared_data}}
+      model_dir: ${{parent.jobs.train_model.outputs.model_dir}}
+      evaluation_file: ${{parent.jobs.evaluate_model.outputs.evaluation_file}}
+      registered_model_name: ${{parent.inputs.registered_model_name}}
+  batch_score:
+    type: command
+    component: ../components/batch_score.yml
+    inputs:
+      prepared_data: ${{parent.jobs.prepare_data.outputs.prepared_data}}
+      model_dir: ${{parent.jobs.train_model.outputs.model_dir}}

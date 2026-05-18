@@ -1,0 +1,28 @@
+.git/
+.github/
+.venv/
+.venv_codex/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Large or runtime-generated folders that Azure ML jobs do not need
+artifacts/
+assets/
+bitcoin/
+data/
+docs/
+notebooks/
+private-notes/
+temp/
+.pytest_cache/
+.mypy_cache/
+
+# Local config and logs
+.env
+*.log
+
+# Repo files not needed inside job snapshots
+LICENSE

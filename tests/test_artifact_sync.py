@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import artifact_sync
+from src.btc_pipeline import artifact_sync
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -111,6 +111,7 @@ __marimo__/
 
 # Local/private files
 PRIVATEDONTSHARE.text
+private-notes/
 
 # App/cache artifacts
 .streamlit_cache/
@@ -123,6 +124,8 @@ bitcoin/saved_models/
 bitcoin/__pycache__/
 bitcoin/train.ipynb
 last_prediction.before_rerun.json
+data/cache/
+artifacts/logs/
 
 # Weather and unrelated project files
 weather/
@@ -157,3 +160,8 @@ tests/__init__.py
 tests/test_hourly_24h_trader.py
 trading bot/
 trading-simulator.html
+
+# Azure local configuration
+azureml/.amlignore.local
+azureml/.azure/
+azureml/config.local.json

@@ -1,0 +1,7 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+name: btc-direction-endpoint
+auth_mode: key
+description: Managed online endpoint for real-time BTC direction inference.
+tags:
+  project: btc-azure-mlops
+  serving: realtime

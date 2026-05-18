@@ -1,0 +1,26 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: btc_prepare_data
+version: 1
+type: command
+display_name: BTC Prepare Data
+description: Fetch BTC candles, engineer features, and create train/validation/future splits.
+inputs:
+  lookback_hours:
+    type: integer
+    default: 5000
+  validation_hours:
+    type: integer
+    default: 48
+outputs:
+  prepared_data:
+    type: uri_folder
+  cache_dir:
+    type: uri_folder
+code: ../../
+environment: azureml:btc-azure-mlops-env:3
+command: >-
+  python -m src.btc_pipeline.azureml_jobs.prepare_data
+  --output-dir ${{outputs.prepared_data}}
+  --cache-dir ${{outputs.cache_dir}}
+  --lookback-hours ${{inputs.lookback_hours}}
+  --validation-hours ${{inputs.validation_hours}}
