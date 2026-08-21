@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - Old Baseline
 
-Generated at: 2026-08-21T22:19:08.202101+00:00
+Generated at: 2026-08-21T22:29:09.453686+00:00
 Scope: `old`
 
 ## Source Files
@@ -19,27 +19,15 @@ Scope: `old`
 | BTC Daily | artifacts/btc/daily/history.csv | 2026-03-21 04:00:00+00:00 to 2026-04-27 22:00:00+00:00 | 857 | 552 | 304 | 1 |
 | BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-04-27 23:00:00+00:00 | 441 | 326 | 114 | 1 |
 | BTC Market Hours Daily | artifacts/btc/market_hours_daily/history.csv | 2026-03-24 22:00:00+00:00 to 2026-04-27 22:00:00+00:00 | 443 | 380 | 61 | 2 |
-| Consolidated Hourly | artifacts/consolidated/history.csv | 2026-05-18 06:00:00+00:00 to 2026-05-18 06:00:00+00:00 | 1 | 1 | 0 | 0 |
-| Consolidated Daily/Hourly Refresh | artifacts/consolidated/history.csv | 2026-05-18 06:00:00+00:00 to 2026-05-18 06:00:00+00:00 | 1 | 1 | 0 | 0 |
-| Consolidated Market Hours | artifacts/consolidated/history.csv | 2026-05-18 06:00:00+00:00 to 2026-05-18 06:00:00+00:00 | 1 | 1 | 0 | 0 |
 | Consolidated Market Hours Daily | artifacts/consolidated/history.csv | 2026-05-18 06:00:00+00:00 to 2026-05-18 06:00:00+00:00 | 1 | 1 | 0 | 0 |
+| Consolidated Hourly | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
+| Consolidated Daily/Hourly Refresh | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
+| Consolidated Market Hours | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
 
 ## Overall Ranking
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Consolidated Hourly | lstm | LSTM | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | transformer | Transformer | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | xgb | XGBoost | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | lstm | LSTM | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | transformer | Transformer | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
 | BTC Market Hours | mlp_sklearn | MLPClassifier | 326 | 162 | 164 | 49.69% | 48.33% | 49.69% | 0.31 pp | -2 | 34 | -0.06 |
 | BTC Daily | transformer | Transformer | 552 | 271 | 281 | 49.09% | 52.50% | 49.58% | 0.91 pp | -10 | 35 | -0.29 |
 | BTC Daily | mlp_sklearn | MLPClassifier | 552 | 270 | 282 | 48.91% | 49.17% | 48.96% | 1.09 pp | -12 | 35 | -0.34 |
@@ -111,33 +99,19 @@ Scope: `old`
 | BTC Market Hours Daily | rf | RandomForest | 380 | 153 | 227 | 40.26% | 37.08% | 40.26% | 9.74 pp | -74 | 34 | -2.18 |
 | BTC Market Hours Daily | xgb | XGBoost | 380 | 149 | 231 | 39.21% | 37.08% | 39.21% | 10.79 pp | -82 | 34 | -2.41 |
 
-### Consolidated Hourly
-
-| Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Consolidated Hourly | lstm | LSTM | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | transformer | Transformer | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Hourly | xgb | XGBoost | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-
-### Consolidated Daily/Hourly Refresh
-
-| Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Consolidated Daily/Hourly Refresh | lstm | LSTM | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | transformer | Transformer | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-
-### Consolidated Market Hours
+### Consolidated Market Hours Daily
 
 _No model-level predictions available for this variation._
 
-### Consolidated Market Hours Daily
+### Consolidated Hourly
+
+_No model-level predictions available for this variation._
+
+### Consolidated Daily/Hourly Refresh
+
+_No model-level predictions available for this variation._
+
+### Consolidated Market Hours
 
 _No model-level predictions available for this variation._
 
