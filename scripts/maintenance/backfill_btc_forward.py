@@ -1297,6 +1297,34 @@ def history_row_from_record(record: dict[str, Any], raw: pd.DataFrame) -> dict[s
     }
 
 
+def enrich_live_replay_record(
+    variation: Variation,
+    record: dict[str, Any],
+    target_timestamp: pd.Timestamp,
+) -> dict[str, Any]:
+    """Stamp live workflow output with replay metadata needed by artifact history."""
+    updated = dict(record)
+    expected_target = parse_timestamp(target_timestamp)
+    actual_target = parse_timestamp(updated.get("target_candle_timestamp"))
+    if expected_target is None or actual_target is None:
+        raise RuntimeError(
+            f"{variation.label} live replay returned an invalid target timestamp."
+        )
+    if actual_target != expected_target:
+        raise RuntimeError(
+            f"{variation.label} live replay returned target {actual_target.isoformat()} "
+            f"for manifest target {expected_target.isoformat()}."
+        )
+    reference_time = replay_run_time(target_timestamp)
+    updated["workflow_name"] = variation.workflow_name
+    updated["workflow_variant"] = variation.workflow_variant
+    updated["generated_at"] = reference_time.isoformat()
+    updated["prediction_generated_at"] = reference_time.isoformat()
+    updated.setdefault("daily_model_refresh", bool(variation.daily_model_refresh))
+    updated.setdefault("model_refresh_et_date", replay_et_date(reference_time))
+    return updated
+
+
 def append_history_row(path: Path, row: dict[str, Any]) -> None:
     local_pd = require_pandas()
     history = load_history(path)
@@ -1469,6 +1497,7 @@ def execute_manifest(
                 )
                 if record is None:
                     continue
+                record = enrich_live_replay_record(variation, record, target)
             elif variation.daily_model_refresh:
                 model_day = replay_et_date(replay_run_time(target))
                 family_key = tuple(sorted(only_families or []))

@@ -440,6 +440,66 @@ class BackfillManifestTests(unittest.TestCase):
 
         self.assertNotIn("BTC_EXCHANGE_MODE", backfill.os.environ)
 
+    def test_execute_manifest_stamps_live_replay_record_workflow_metadata(self) -> None:
+        hourly = backfill.Variation(
+            label="BTC Hourly",
+            history_path=self.temp_root / "hourly.csv",
+            last_prediction_path=None,
+            registered_model_name="hourly",
+            workflow_name="hourly24",
+            workflow_variant="hourly_24h_prediction",
+            daily_model_refresh=False,
+        )
+        target = backfill.parse_timestamp("2026-04-28T00:00:00+00:00")
+        record = {
+            "target_candle_timestamp": target.isoformat(),
+            "predicted_label": 1,
+        }
+        appended_rows: list[dict[str, object]] = []
+
+        def fake_history_row(row_record: dict[str, object], _: object) -> dict[str, object]:
+            return {
+                "timestamp": row_record["target_candle_timestamp"],
+                "predicted": row_record["predicted_label"],
+                "actual": "UP",
+                "result": 1,
+                "failed": 0,
+                "status": "validated",
+                "workflow_name": row_record["workflow_name"],
+                "workflow_variant": row_record["workflow_variant"],
+                "prediction_generated_at": row_record["prediction_generated_at"],
+            }
+
+        with patch.object(backfill, "fetch_raw_snapshot", return_value=object()), \
+            patch.object(backfill, "execute_live_btc_replay", return_value=record), \
+            patch.object(backfill, "history_row_from_record", side_effect=fake_history_row), \
+            patch.object(backfill, "append_history_row", side_effect=lambda _path, row: appended_rows.append(row)), \
+            patch.object(backfill, "assert_no_missing_rows"):
+            backfill.execute_manifest({hourly: [target]})
+
+        self.assertEqual(appended_rows[0]["workflow_name"], "hourly24")
+        self.assertEqual(appended_rows[0]["workflow_variant"], "hourly_24h_prediction")
+        self.assertEqual(
+            appended_rows[0]["prediction_generated_at"],
+            "2026-04-27T23:00:00+00:00",
+        )
+
+    def test_enrich_live_replay_record_rejects_wrong_target(self) -> None:
+        hourly = backfill.Variation(
+            label="BTC Hourly",
+            history_path=self.temp_root / "hourly.csv",
+            last_prediction_path=None,
+            registered_model_name="hourly",
+            workflow_name="hourly24",
+            workflow_variant="hourly_24h_prediction",
+            daily_model_refresh=False,
+        )
+        target = backfill.parse_timestamp("2026-04-28T00:00:00+00:00")
+        record = {"target_candle_timestamp": "2026-04-28T01:00:00+00:00"}
+
+        with self.assertRaisesRegex(RuntimeError, "manifest target"):
+            backfill.enrich_live_replay_record(hourly, record, target)
+
     def test_live_daily_prediction_only_reloads_registry_champions(self) -> None:
         variation = backfill.Variation(
             label="BTC Daily",
