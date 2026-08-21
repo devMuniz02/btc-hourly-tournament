@@ -420,6 +420,26 @@ class BackfillManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "No model families matched"):
             backfill.selected_families({"made_up_family"})
 
+    def test_execute_manifest_does_not_force_binance_only_mode(self) -> None:
+        hourly = backfill.Variation(
+            label="BTC Hourly",
+            history_path=self.temp_root / "hourly.csv",
+            last_prediction_path=None,
+            registered_model_name="hourly",
+            workflow_name="hourly24",
+            workflow_variant="hourly",
+            daily_model_refresh=False,
+        )
+        target = backfill.parse_timestamp("2026-04-28T00:00:00+00:00")
+
+        with patch.dict("os.environ", {}, clear=True), \
+            patch.object(backfill, "fetch_raw_snapshot", return_value=object()), \
+            patch.object(backfill, "execute_live_btc_replay", return_value=None), \
+            patch.object(backfill, "assert_no_missing_rows"):
+            backfill.execute_manifest({hourly: [target]})
+
+        self.assertNotIn("BTC_EXCHANGE_MODE", backfill.os.environ)
+
     def test_live_daily_prediction_only_reloads_registry_champions(self) -> None:
         variation = backfill.Variation(
             label="BTC Daily",

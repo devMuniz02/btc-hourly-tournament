@@ -1449,7 +1449,6 @@ def execute_manifest(
     only_families: set[str] | None = None,
     raw_cache: RawSnapshotCache | None = None,
 ) -> None:
-    os.environ.setdefault("BTC_EXCHANGE_MODE", "binance")
     daily_bundles: dict[tuple[str, str, tuple[str, ...]], TrainedModelBundle] = {}
     live_replay_days_with_models: set[tuple[str, str]] = set()
     consolidated_targets: set[Any] = set()
