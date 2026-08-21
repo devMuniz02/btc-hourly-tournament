@@ -1,0 +1,10 @@
+ccxt
+joblib
+matplotlib
+mlflow==2.22.1
+numpy
+pandas
+python-dotenv
+pyyaml
+scikit-learn==1.8.0
+xgboost
