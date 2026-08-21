@@ -126,6 +126,8 @@ bitcoin/train.ipynb
 last_prediction.before_rerun.json
 data/cache/
 artifacts/logs/
+artifacts/backfill_model_cache/
+artifacts/newtest/
 
 # Weather and unrelated project files
 weather/

@@ -15,6 +15,7 @@ import json
 import os
 import pickle
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -422,6 +423,11 @@ def parse_args() -> argparse.Namespace:
         help="For NEWTEST variations, run only the latest N settled target hours.",
     )
     parser.add_argument(
+        "--include-newtest",
+        action="store_true",
+        help="Include isolated NEWTEST variations when no --only filter is provided.",
+    )
+    parser.add_argument(
         "--reset-newtest",
         action="store_true",
         help="Delete isolated NEWTEST history, last prediction, and cached model bundles before running.",
@@ -566,6 +572,8 @@ def build_manifest(args: argparse.Namespace) -> dict[Variation, list[pd.Timestam
     manifest: dict[Variation, list[pd.Timestamp]] = {}
     for variation in VARIATIONS:
         if selected and variation.label not in selected:
+            continue
+        if not selected and variation.label.startswith("NEWTEST ") and not args.include_newtest:
             continue
         if variation.label.startswith("NEWTEST ") and args.newtest_latest_hours:
             start = explicit_start or (end - pd_timedelta(hours=args.newtest_latest_hours - 1))
@@ -1714,8 +1722,6 @@ def collect_artifact_files() -> list[Path]:
     glob_roots = [
         ROOT / "assets/btc",
         ROOT / "assets/consolidated",
-        ROOT / "artifacts/backfill_model_cache",
-        ROOT / "artifacts/newtest",
     ]
     files = [path for path in explicit_paths if path.exists()]
     for root in glob_roots:
@@ -1738,7 +1744,26 @@ def publish_backfill_artifacts(commit_message: str) -> None:
     )
 
 
+def refresh_dashboards() -> list[Path]:
+    dashboard_scripts = [
+        ROOT / "src/btc_pipeline/validate_dashboard.py",
+        ROOT / "src/btc_pipeline/validate_dashboard_daily.py",
+        ROOT / "src/btc_pipeline/validate_dashboard_market_hours.py",
+        ROOT / "src/btc_pipeline/validate_dashboard_market_hours_daily.py",
+        ROOT / "pipelines/consolidated/validate_dashboard.py",
+    ]
+    refreshed: list[Path] = []
+    for script in dashboard_scripts:
+        subprocess.run([sys.executable, str(script)], cwd=ROOT, check=True)
+    for root in (ROOT / "assets/btc", ROOT / "assets/consolidated"):
+        if root.exists():
+            refreshed.extend(path for path in root.rglob("*.png") if path.is_file())
+    return sorted(refreshed)
+
+
 def finish_batch(*, skip_report: bool, publish_artifacts: bool, commit_message: str) -> None:
+    for dashboard_path in refresh_dashboards():
+        print(f"Refreshed {dashboard_path.relative_to(ROOT)}")
     if not skip_report:
         for report_path in generate_all_reports():
             print(f"Regenerated {report_path.relative_to(ROOT)}")

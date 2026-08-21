@@ -83,6 +83,7 @@ class BackfillManifestTests(unittest.TestCase):
             to_ts="2026-04-28T05:00:00+00:00",
             only=None,
             newtest_latest_hours=None,
+            include_newtest=False,
         )
 
         with patch.object(backfill, "VARIATIONS", (variation,)), patch.dict(
@@ -149,6 +150,7 @@ class BackfillManifestTests(unittest.TestCase):
             to_ts="2026-04-28T03:00:00+00:00",
             only=None,
             newtest_latest_hours=None,
+            include_newtest=False,
         )
 
         with patch.object(backfill, "VARIATIONS", (variation,)), patch.dict(
@@ -161,6 +163,58 @@ class BackfillManifestTests(unittest.TestCase):
         self.assertEqual(
             [target.isoformat() for target in manifest[variation]],
             ["2026-04-28T03:00:00+00:00"],
+        )
+
+    def test_manifest_excludes_newtest_by_default(self) -> None:
+        variation = backfill.Variation(
+            label="NEWTEST BTC Daily",
+            history_path=self.temp_root / "newtest.csv",
+            last_prediction_path=None,
+            registered_model_name="newtest",
+            workflow_name="newtest-daily-hourly",
+            workflow_variant="newtest",
+            daily_model_refresh=True,
+        )
+        args = Namespace(
+            from_ts=None,
+            to_ts="2026-08-21T05:00:00+00:00",
+            only=None,
+            newtest_latest_hours=2,
+            include_newtest=False,
+        )
+
+        with patch.object(backfill, "VARIATIONS", (variation,)):
+            manifest = backfill.build_manifest(args)
+
+        self.assertNotIn(variation, manifest)
+
+    def test_manifest_includes_explicit_newtest_selection(self) -> None:
+        variation = backfill.Variation(
+            label="NEWTEST BTC Daily",
+            history_path=self.temp_root / "newtest.csv",
+            last_prediction_path=None,
+            registered_model_name="newtest",
+            workflow_name="newtest-daily-hourly",
+            workflow_variant="newtest",
+            daily_model_refresh=True,
+        )
+        args = Namespace(
+            from_ts=None,
+            to_ts="2026-08-21T05:00:00+00:00",
+            only=["NEWTEST BTC Daily"],
+            newtest_latest_hours=2,
+            include_newtest=False,
+        )
+
+        with patch.object(backfill, "VARIATIONS", (variation,)):
+            manifest = backfill.build_manifest(args)
+
+        self.assertEqual(
+            [target.isoformat() for target in manifest[variation]],
+            [
+                "2026-08-21T04:00:00+00:00",
+                "2026-08-21T05:00:00+00:00",
+            ],
         )
 
     def test_limit_manifest_preserves_per_variation_and_global_caps(self) -> None:

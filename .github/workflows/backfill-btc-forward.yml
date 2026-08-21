@@ -114,6 +114,25 @@ jobs:
             fi
           done
 
+      - name: Validate production backfill scope and registry
+        shell: bash
+        run: |
+          missing=()
+          for name in MLFLOW_TRACKING_URI MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required MLflow/DagsHub registry secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+          if [[ "$BACKFILL_ONLY" == NEWTEST* ]]; then
+            echo "NEWTEST variations are local-only and are not allowed in the GitHub production backfill workflow."
+            exit 1
+          fi
+          echo "Production backfill will use the configured MLflow registry at $MLFLOW_TRACKING_URI."
+
       - name: Build backfill arguments
         id: args
         shell: bash
