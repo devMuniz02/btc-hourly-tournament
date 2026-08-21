@@ -114,5 +114,8 @@
   "symbol": "BTC/USDT",
   "timeframe": "1h",
   "workflow_name": "market-hours-hourly",
-  "workflow_variant": "hourly_train_7am_7pm_et_predict_8am_8pm_et"
+  "workflow_variant": "hourly_train_7am_7pm_et_predict_8am_8pm_et",
+  "prediction_generated_at": "2026-04-27T23:00:00+00:00",
+  "daily_model_refresh": false,
+  "model_refresh_et_date": "2026-04-27"
 }
