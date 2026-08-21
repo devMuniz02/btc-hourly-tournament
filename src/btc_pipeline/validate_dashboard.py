@@ -284,7 +284,10 @@ def load_history() -> pd.DataFrame:
     if history.empty:
         return pd.DataFrame(columns=HISTORY_COLUMNS)
     original_columns = list(history.columns)
-    history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True)
+    try:
+        history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True, format="mixed")
+    except TypeError:
+        history["timestamp"] = pd.to_datetime(history["timestamp"], utc=True)
     if "failed" not in history.columns:
         history["failed"] = 0
     if "status" not in history.columns:

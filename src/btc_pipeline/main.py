@@ -838,6 +838,7 @@ def fit_candidate(
 def run_challenger_cross_validation(
     labeled_df: pd.DataFrame,
     folds: int = CROSS_VALIDATION_FOLDS,
+    only_families: set[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     log_step(f"Run {folds}-fold time-series cross-validation")
     splitter = TimeSeriesSplit(n_splits=folds)
@@ -854,6 +855,12 @@ def run_challenger_cross_validation(
             train_seq_y=fold_splits["train_seq_y"],
             scaler=fold_splits["scaler"],
         )
+        if only_families:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.family in only_families
+            ]
         print(f"Cross-validation fold {fold_index}/{folds}", flush=True)
         for candidate in candidates:
             print(f"  Fold {fold_index}: training {candidate.name}", flush=True)
@@ -956,14 +963,21 @@ def predict_candidate_probabilities(
 def train_challengers(
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
+    only_families: set[str] | None = None,
 ) -> tuple[list[TournamentCandidate], dict[str, dict[str, float]]]:
     log_step("Prepare challenger datasets")
-    cv_summary = run_challenger_cross_validation(train_df)
+    cv_summary = run_challenger_cross_validation(train_df, only_families=only_families)
     sequence_splits = prepare_sequence_splits(train_df, valid_df, FEATURE_COLUMNS, SEQUENCE_LENGTH)
     challengers = build_challenger_candidates(
         train_seq_y=sequence_splits["train_seq_y"],
         scaler=sequence_splits["scaler"],
     )
+    if only_families:
+        challengers = [
+            candidate
+            for candidate in challengers
+            if candidate.family in only_families
+        ]
 
     for candidate in challengers:
         print(f"Training challenger: {candidate.name}", flush=True)
@@ -983,6 +997,7 @@ def train_challengers(
 
 def retrain_challengers_on_full_data(
     labeled_df: pd.DataFrame,
+    only_families: set[str] | None = None,
 ) -> list[TournamentCandidate]:
     log_step("Retrain challengers on all labeled data")
     training_data = prepare_full_sequence_training_data(
@@ -994,6 +1009,12 @@ def retrain_challengers_on_full_data(
         train_seq_y=training_data["seq_y"],
         scaler=training_data["scaler"],
     )
+    if only_families:
+        challengers = [
+            candidate
+            for candidate in challengers
+            if candidate.family in only_families
+        ]
     for candidate in challengers:
         print(f"Refitting challenger on full data: {candidate.name}", flush=True)
         fit_candidate(
@@ -1589,9 +1610,13 @@ def build_prediction_record(
     active_results_by_family: dict[str, dict[str, Any]],
     future_row: pd.DataFrame,
     registered_model_name: str,
+    generated_at: pd.Timestamp | str | None = None,
 ) -> dict[str, Any]:
     reference_timestamp = pd.Timestamp(future_row["timestamp"].iloc[0])
     target_timestamp = reference_timestamp + pd.Timedelta(hours=1)
+    generated_timestamp = (
+        pd.Timestamp.utcnow() if generated_at is None else pd.Timestamp(generated_at)
+    )
     model_predictions = {
         family: {
             **serialize_result(result),
@@ -1602,7 +1627,7 @@ def build_prediction_record(
     }
     return {
         "status": "success",
-        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "generated_at": generated_timestamp.isoformat(),
         "registered_model_name": registered_model_name,
         "model_name": active_result["candidate"].name,
         "model_family": active_result["family"],
@@ -1656,20 +1681,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def execute_hourly_workflow(
+    args: argparse.Namespace | None = None,
+    *,
+    raw: pd.DataFrame | None = None,
+    reference_time: pd.Timestamp | str | None = None,
+) -> dict[str, Any]:
+    args = parse_args() if args is None else args
     log_step("Initialize tournament")
     set_seed()
-    registered_model_name = configure_tracking()
+    registered_model_name = configure_tracking(reference_time)
     client = MlflowClient()
 
-    log_step("Fetch BTC/USDT market data")
-    raw = fetch_ohlcv(
-        limit=LOOKBACK_HOURS,
-        min_candles=5000,
-        retry_binanceus=True,
-        retry_binanceus_attempts=3,
-    )
+    if raw is None:
+        log_step("Fetch BTC/USDT market data")
+        raw = fetch_ohlcv(
+            limit=LOOKBACK_HOURS,
+            min_candles=5000,
+            retry_binanceus=True,
+            retry_binanceus_attempts=3,
+        )
     log_step("Build features and dataset splits")
     featured = add_features(raw)
     train_df, valid_df, future_row = split_dataset(featured, VALIDATION_HOURS)
@@ -1843,6 +1874,7 @@ def main() -> None:
             active_results_by_family=active_results_by_family,
             future_row=future_row,
             registered_model_name=registered_model_name,
+            generated_at=reference_time,
         )
         log_step("Write latest prediction metadata")
         LAST_PREDICTION_PATH.write_text(
@@ -1875,6 +1907,11 @@ def main() -> None:
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
     print(f"Final signal: {active_result['next_signal']}")
+    return prediction_record
+
+
+def main() -> None:
+    execute_hourly_workflow()
 
 
 if __name__ == "__main__":

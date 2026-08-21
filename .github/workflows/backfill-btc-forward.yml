@@ -1,0 +1,201 @@
+name: BTC Forward Backfill
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/backfill-btc-forward.yml"
+      - "scripts/maintenance/backfill_btc_forward.py"
+      - "scripts/maintenance/generate_btc_model_metrics_report.py"
+      - "src/btc_pipeline/**"
+      - "pipelines/consolidated/**"
+      - "artifacts/btc/**"
+      - "artifacts/consolidated/**"
+  schedule:
+    - cron: "* * * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Optional exact variation label, for example BTC Daily"
+        required: false
+        default: ""
+      max_hours:
+        description: "Maximum target hours per selected variation"
+        required: true
+        default: "1"
+      max_total_targets:
+        description: "Optional maximum target hours across all selected variations"
+        required: false
+        default: ""
+      batch_size:
+        description: "Target hours to run before report/publish"
+        required: false
+        default: "1"
+      to:
+        description: "Optional UTC cutoff, for example 2026-08-21T12:00:00+00:00"
+        required: false
+        default: ""
+      only_family:
+        description: "Optional emergency/test family filter: rf, xgb, mlp_sklearn, lstm, transformer, or nn"
+        required: false
+        default: ""
+      skip_report:
+        description: "Skip metrics report regeneration"
+        required: true
+        type: boolean
+        default: false
+      publish:
+        description: "Commit and push generated artifacts"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: btc-forward-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      PYTHONUNBUFFERED: "1"
+      BTC_EXCHANGE_MODE: binance
+      DAGSHUB_OWNER: ${{ secrets.DAGSHUB_OWNER }}
+      DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      MLFLOW_MODEL_NAME: ${{ secrets.MLFLOW_MODEL_NAME }}
+      MLFLOW_DAILY_MODEL_NAME: ${{ secrets.MLFLOW_DAILY_MODEL_NAME }}
+      MLFLOW_MARKET_HOURS_MODEL_NAME: ${{ secrets.MLFLOW_MARKET_HOURS_MODEL_NAME }}
+      MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME: ${{ secrets.MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME }}
+      MLFLOW_CONSOLIDATED_MODEL_NAME: ${{ secrets.MLFLOW_CONSOLIDATED_MODEL_NAME }}
+      BACKFILL_ONLY: ${{ github.event.inputs.only || '' }}
+      BACKFILL_MAX_HOURS: ${{ github.event.inputs.max_hours || '1' }}
+      BACKFILL_MAX_TOTAL_TARGETS: ${{ github.event.inputs.max_total_targets || '' }}
+      BACKFILL_BATCH_SIZE: ${{ github.event.inputs.batch_size || '1' }}
+      BACKFILL_TO: ${{ github.event.inputs.to || '' }}
+      BACKFILL_ONLY_FAMILY: ${{ github.event.inputs.only_family || '' }}
+      BACKFILL_SKIP_REPORT: ${{ github.event.inputs.skip_report || 'false' }}
+      BACKFILL_PUBLISH: ${{ github.event.inputs.publish || 'true' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Print registry configuration status
+        shell: bash
+        run: |
+          for name in MLFLOW_TRACKING_URI MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD MLFLOW_MODEL_NAME MLFLOW_DAILY_MODEL_NAME MLFLOW_MARKET_HOURS_MODEL_NAME MLFLOW_MARKET_HOURS_DAILY_MODEL_NAME MLFLOW_CONSOLIDATED_MODEL_NAME DAGSHUB_OWNER DAGSHUB_REPO; do
+            if [ -n "${!name}" ]; then
+              echo "$name=set"
+            else
+              echo "$name=missing"
+            fi
+          done
+
+      - name: Build backfill arguments
+        id: args
+        shell: bash
+        run: |
+          args=(--max-hours "$BACKFILL_MAX_HOURS")
+          if [ -n "$BACKFILL_ONLY" ]; then
+            args+=(--only "$BACKFILL_ONLY")
+          fi
+          if [ -n "$BACKFILL_MAX_TOTAL_TARGETS" ]; then
+            args+=(--max-total-targets "$BACKFILL_MAX_TOTAL_TARGETS")
+          fi
+          if [ -n "$BACKFILL_BATCH_SIZE" ]; then
+            args+=(--batch-size "$BACKFILL_BATCH_SIZE")
+          fi
+          if [ -n "$BACKFILL_TO" ]; then
+            args+=(--to "$BACKFILL_TO")
+          fi
+          if [ -n "$BACKFILL_ONLY_FAMILY" ]; then
+            args+=(--only-family "$BACKFILL_ONLY_FAMILY")
+          fi
+          if [ "$BACKFILL_SKIP_REPORT" = "true" ]; then
+            args+=(--skip-report)
+          fi
+          printf 'args<<EOF\n' >> "$GITHUB_OUTPUT"
+          printf '%q ' "${args[@]}" >> "$GITHUB_OUTPUT"
+          printf '\nEOF\n' >> "$GITHUB_OUTPUT"
+
+      - name: Backfill dry run
+        run: python scripts/maintenance/backfill_btc_forward.py --dry-run ${{ steps.args.outputs.args }}
+
+      - name: Execute backfill
+        shell: bash
+        run: |
+          publish_args=()
+          if [ "$BACKFILL_PUBLISH" = "true" ]; then
+            publish_args+=(--publish-artifacts)
+          fi
+          python scripts/maintenance/backfill_btc_forward.py \
+            --execute \
+            ${{ steps.args.outputs.args }} \
+            "${publish_args[@]}"
+
+      - name: Check remaining backfill work
+        id: remaining
+        if: env.BACKFILL_PUBLISH == 'true'
+        shell: bash
+        run: |
+          remaining_args=(--max-hours 1 --max-total-targets 1)
+          if [ -n "$BACKFILL_ONLY" ]; then
+            remaining_args+=(--only "$BACKFILL_ONLY")
+          fi
+          if [ -n "$BACKFILL_TO" ]; then
+            remaining_args+=(--to "$BACKFILL_TO")
+          fi
+          if [ -n "$BACKFILL_ONLY_FAMILY" ]; then
+            remaining_args+=(--only-family "$BACKFILL_ONLY_FAMILY")
+          fi
+          output="$(python scripts/maintenance/backfill_btc_forward.py --dry-run "${remaining_args[@]}")"
+          printf '%s\n' "$output"
+          if printf '%s\n' "$output" | grep -q "Total target hours to execute: 0"; then
+            echo "has_remaining=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_remaining=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Re-dispatch next backfill chunk
+        if: env.BACKFILL_PUBLISH == 'true' && steps.remaining.outputs.has_remaining == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          args=(-f max_hours="$BACKFILL_MAX_HOURS" -f batch_size="$BACKFILL_BATCH_SIZE" -f skip_report="$BACKFILL_SKIP_REPORT" -f publish="$BACKFILL_PUBLISH")
+          if [ -n "$BACKFILL_ONLY" ]; then
+            args+=(-f only="$BACKFILL_ONLY")
+          fi
+          if [ -n "$BACKFILL_MAX_TOTAL_TARGETS" ]; then
+            args+=(-f max_total_targets="$BACKFILL_MAX_TOTAL_TARGETS")
+          fi
+          if [ -n "$BACKFILL_TO" ]; then
+            args+=(-f to="$BACKFILL_TO")
+          fi
+          if [ -n "$BACKFILL_ONLY_FAMILY" ]; then
+            args+=(-f only_family="$BACKFILL_ONLY_FAMILY")
+          fi
+          gh workflow run backfill-btc-forward.yml --ref "$GITHUB_REF_NAME" "${args[@]}"

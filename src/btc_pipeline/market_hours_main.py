@@ -46,10 +46,10 @@ def resolve_market_hours_registered_model_name() -> str:
     return f"{base_name}{MARKET_HOURS_MODEL_NAME_SUFFIX}"
 
 
-def configure_market_hours_tracking() -> str:
+def configure_market_hours_tracking(reference_time: pd.Timestamp | str | None = None) -> str:
     tournament.DEFAULT_EXPERIMENT_PREFIX = MARKET_HOURS_EXPERIMENT_PREFIX
     registered_model_name = resolve_market_hours_registered_model_name()
-    tournament.configure_tracking()
+    tournament.configure_tracking(reference_time)
     return registered_model_name
 
 
@@ -92,31 +92,37 @@ def write_failed_prediction_record(exc: Exception) -> None:
     )
 
 
-def main() -> None:
-    args = parse_args()
+def execute_market_hours_workflow(
+    args: argparse.Namespace | None = None,
+    *,
+    raw: pd.DataFrame | None = None,
+    reference_time: pd.Timestamp | str | None = None,
+) -> dict[str, object] | None:
+    args = parse_args() if args is None else args
     configure_market_hours_paths()
     tournament.log_step("Initialize ET market-hours BTC pipeline")
-    print(describe_window())
+    print(describe_window(reference_time))
 
-    if not should_run_prediction_window() or not should_run_training_window():
+    if not should_run_prediction_window(reference_time) or not should_run_training_window(reference_time):
         print(
             "Skipping ET market-hours hourly training: "
             "training is only allowed when the current ET hour is 7am-7pm "
             "and the next target candle is within 8am-8pm ET."
         )
-        return
+        return None
 
     tournament.set_seed()
-    registered_model_name = configure_market_hours_tracking()
+    registered_model_name = configure_market_hours_tracking(reference_time)
     client = MlflowClient()
 
-    tournament.log_step("Fetch BTC/USDT market data")
-    raw = tournament.fetch_ohlcv(
-        limit=tournament.LOOKBACK_HOURS,
-        min_candles=5000,
-        retry_binanceus=True,
-        retry_binanceus_attempts=3,
-    )
+    if raw is None:
+        tournament.log_step("Fetch BTC/USDT market data")
+        raw = tournament.fetch_ohlcv(
+            limit=tournament.LOOKBACK_HOURS,
+            min_candles=5000,
+            retry_binanceus=True,
+            retry_binanceus_attempts=3,
+        )
     tournament.log_step("Build features and dataset splits")
     featured = tournament.add_features(raw)
     train_df, valid_df, future_row = tournament.split_dataset(
@@ -296,6 +302,7 @@ def main() -> None:
             active_results_by_family=active_results_by_family,
             future_row=future_row,
             registered_model_name=registered_model_name,
+            generated_at=reference_time,
         )
         prediction_record = enrich_prediction_record(prediction_record)
         tournament.log_step("Write latest market-hours prediction metadata")
@@ -326,6 +333,11 @@ def main() -> None:
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
     print(f"Final signal: {active_result['next_signal']}")
+    return prediction_record
+
+
+def main() -> None:
+    execute_market_hours_workflow()
 
 
 if __name__ == "__main__":
