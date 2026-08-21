@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - NEWTEST
 
-Generated at: 2026-08-21T14:16:59.987402+00:00
+Generated at: 2026-08-21T20:50:36.475208+00:00
 Scope: `newtest`
 
 ## Source Files
@@ -11,18 +11,18 @@ Scope: `newtest`
 
 | Variation | Source File | Date Range | Rows | Validated | Missing | Failed |
 | --- | --- | --- | --- | --- | --- | --- |
-| NEWTEST BTC Daily | artifacts/newtest/btc_daily_history.csv | 2026-08-11T04:00:00+00:00 to 2026-08-21T04:00:00+00:00 | 241 | 241 | 0 | 0 |
+| NEWTEST BTC Daily | artifacts/newtest/btc_daily_history.csv | 2026-08-11T04:00:00+00:00 to 2026-08-21T06:00:00+00:00 | 243 | 243 | 0 | 0 |
 
 ## Overall Ranking
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| NEWTEST BTC Daily | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | lstm | LSTM | 1 | 0 | 1 | 0.00% | 0.00% | 0.00% | 50.00 pp | -1 | 1 | -1.00 |
-| NEWTEST BTC Daily | transformer | Transformer | 1 | 0 | 1 | 0.00% | 0.00% | 0.00% | 50.00 pp | -1 | 1 | -1.00 |
-| NEWTEST BTC Daily | xgb | XGBoost | 241 | 106 | 135 | 43.98% | 44.17% | 43.98% | 6.02 pp | -29 | 11 | -2.64 |
+| NEWTEST BTC Daily | nn | NN | 3 | 3 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 3 | 1 | 3.00 |
+| NEWTEST BTC Daily | mlp_sklearn | MLPClassifier | 3 | 2 | 1 | 66.67% | 66.67% | 66.67% | 16.67 pp | 1 | 1 | 1.00 |
+| NEWTEST BTC Daily | rf | RandomForest | 3 | 1 | 2 | 33.33% | 33.33% | 33.33% | 16.67 pp | -1 | 1 | -1.00 |
+| NEWTEST BTC Daily | xgb | XGBoost | 243 | 107 | 136 | 44.03% | 44.17% | 44.03% | 5.97 pp | -29 | 11 | -2.64 |
+| NEWTEST BTC Daily | lstm | LSTM | 3 | 0 | 3 | 0.00% | 0.00% | 0.00% | 50.00 pp | -3 | 1 | -3.00 |
+| NEWTEST BTC Daily | transformer | Transformer | 3 | 0 | 3 | 0.00% | 0.00% | 0.00% | 50.00 pp | -3 | 1 | -3.00 |
 
 ## Variation Tables
 
@@ -30,12 +30,12 @@ Scope: `newtest`
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| NEWTEST BTC Daily | mlp_sklearn | MLPClassifier | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | nn | NN | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | rf | RandomForest | 1 | 1 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 1 | 1 | 1.00 |
-| NEWTEST BTC Daily | lstm | LSTM | 1 | 0 | 1 | 0.00% | 0.00% | 0.00% | 50.00 pp | -1 | 1 | -1.00 |
-| NEWTEST BTC Daily | transformer | Transformer | 1 | 0 | 1 | 0.00% | 0.00% | 0.00% | 50.00 pp | -1 | 1 | -1.00 |
-| NEWTEST BTC Daily | xgb | XGBoost | 241 | 106 | 135 | 43.98% | 44.17% | 43.98% | 6.02 pp | -29 | 11 | -2.64 |
+| NEWTEST BTC Daily | nn | NN | 3 | 3 | 0 | 100.00% | 100.00% | 100.00% | 50.00 pp | 3 | 1 | 3.00 |
+| NEWTEST BTC Daily | mlp_sklearn | MLPClassifier | 3 | 2 | 1 | 66.67% | 66.67% | 66.67% | 16.67 pp | 1 | 1 | 1.00 |
+| NEWTEST BTC Daily | rf | RandomForest | 3 | 1 | 2 | 33.33% | 33.33% | 33.33% | 16.67 pp | -1 | 1 | -1.00 |
+| NEWTEST BTC Daily | xgb | XGBoost | 243 | 107 | 136 | 44.03% | 44.17% | 44.03% | 5.97 pp | -29 | 11 | -2.64 |
+| NEWTEST BTC Daily | lstm | LSTM | 3 | 0 | 3 | 0.00% | 0.00% | 0.00% | 50.00 pp | -3 | 1 | -3.00 |
+| NEWTEST BTC Daily | transformer | Transformer | 3 | 0 | 3 | 0.00% | 0.00% | 0.00% | 50.00 pp | -3 | 1 | -3.00 |
 
 ## Metric Definitions
 
