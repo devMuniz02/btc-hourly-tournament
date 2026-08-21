@@ -1532,7 +1532,7 @@ def promote_champion(
 
     log_model_start = time.perf_counter()
     mlflow.pyfunc.log_model(
-        name=artifact_name,
+        artifact_path=artifact_name,
         python_model=str(model_code_path),
         artifacts={"model_dir": str(promotion_payload["package_dir"])},
         registered_model_name=registered_model_name,
