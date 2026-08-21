@@ -81,7 +81,9 @@ def configure_tracking(
     return config.resolve_base_registered_model_name()
 
 
-def fetch_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def fetch_dataset(
+    reference_time: pd.Timestamp | str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     tournament.log_step("Fetch BTC/USDT market data")
     raw = tournament.fetch_ohlcv(
         limit=tournament.LOOKBACK_HOURS,
@@ -89,6 +91,13 @@ def fetch_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFr
         retry_binanceus=True,
         retry_binanceus_attempts=3,
     )
+    if reference_time is not None:
+        cutoff = pd.Timestamp(reference_time)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.tz_localize("UTC")
+        else:
+            cutoff = cutoff.tz_convert("UTC")
+        raw = raw[pd.to_datetime(raw["timestamp"], utc=True) <= cutoff].reset_index(drop=True)
     tournament.log_step("Build features and dataset splits")
     featured = tournament.add_features(raw)
     train_df, valid_df, future_row = tournament.split_dataset(
@@ -538,6 +547,7 @@ def finalize_track(
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
     full_labeled_df: pd.DataFrame,
+    reference_time: pd.Timestamp,
 ) -> dict[str, Any]:
     track_registered_model_name = state["track_registered_model_name"]
     validation_start = valid_df["timestamp"].iloc[0].isoformat()
@@ -626,6 +636,7 @@ def finalize_track(
             active_results_by_family=active_results_by_family,
             future_row=future_row,
             registered_model_name=track_registered_model_name,
+            generated_at=reference_time,
         )
         prediction_record.update(
             {
@@ -659,6 +670,7 @@ def build_preview_track_summary(
     state: dict[str, Any],
     family_decisions_by_family: dict[str, dict[str, Any]],
     future_row: pd.DataFrame,
+    reference_time: pd.Timestamp,
 ) -> dict[str, Any]:
     family_decisions: list[dict[str, Any]] = []
     active_results_by_family: dict[str, dict[str, Any]] = {}
@@ -698,6 +710,7 @@ def build_preview_track_summary(
         active_results_by_family=active_results_by_family,
         future_row=future_row,
         registered_model_name=state["track_registered_model_name"],
+        generated_at=reference_time,
     )
     prediction_record.update(
         {
@@ -845,7 +858,7 @@ def execute_consolidated_workflow(
     base_registered_model_name = configure_tracking(run_reference_time)
     client = MlflowClient()
     now = run_reference_time
-    raw, train_df, valid_df, future_row = fetch_dataset()
+    raw, train_df, valid_df, future_row = fetch_dataset(run_reference_time)
 
     tournament.log_step("Train challenger zoo once for all consolidated tracks")
     challengers, cv_summary = tournament.train_challengers(train_df, valid_df)
@@ -971,6 +984,7 @@ def execute_consolidated_workflow(
                     state=state,
                     family_decisions_by_family=track_decisions[track.id],
                     future_row=future_row,
+                    reference_time=now,
                 )
             pending_publish = PendingConsolidatedPublish(
                 base_registered_model_name=base_registered_model_name,
@@ -1001,6 +1015,7 @@ def execute_consolidated_workflow(
                     valid_df=valid_df,
                     future_row=future_row,
                     full_labeled_df=full_labeled_df,
+                    reference_time=now,
                 )
 
         last_prediction_payload, comparison_summary = build_output_payload(
@@ -1092,6 +1107,7 @@ def finalize_pending_publish(
                 valid_df=pending_publish.valid_df,
                 future_row=pending_publish.future_row,
                 full_labeled_df=pending_publish.full_labeled_df,
+                reference_time=pending_publish.now,
             )
 
         last_prediction_payload, comparison_summary = build_output_payload(

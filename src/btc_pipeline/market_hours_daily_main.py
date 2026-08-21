@@ -57,10 +57,10 @@ def resolve_market_hours_daily_registered_model_name() -> str:
     return f"{base_name}{MARKET_HOURS_DAILY_MODEL_NAME_SUFFIX}"
 
 
-def configure_market_hours_daily_tracking() -> str:
+def configure_market_hours_daily_tracking(reference_time: pd.Timestamp | str | None = None) -> str:
     tournament.DEFAULT_EXPERIMENT_PREFIX = MARKET_HOURS_DAILY_EXPERIMENT_PREFIX
     registered_model_name = resolve_market_hours_daily_registered_model_name()
-    tournament.configure_tracking()
+    tournament.configure_tracking(reference_time)
     return registered_model_name
 
 
@@ -122,14 +122,17 @@ def champions_trained_for_current_et_day(
     return True
 
 
-def fetch_dataset() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    tournament.log_step("Fetch BTC/USDT market data")
-    raw = tournament.fetch_ohlcv(
-        limit=tournament.LOOKBACK_HOURS,
-        min_candles=5000,
-        retry_binanceus=True,
-        retry_binanceus_attempts=3,
-    )
+def fetch_dataset(
+    raw: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if raw is None:
+        tournament.log_step("Fetch BTC/USDT market data")
+        raw = tournament.fetch_ohlcv(
+            limit=tournament.LOOKBACK_HOURS,
+            min_candles=5000,
+            retry_binanceus=True,
+            retry_binanceus_attempts=3,
+        )
     tournament.log_step("Build features and dataset splits")
     featured = tournament.add_features(raw)
     train_df, valid_df, future_row = tournament.split_dataset(
@@ -143,12 +146,13 @@ def enrich_prediction_record(
     prediction_record: dict[str, Any],
     *,
     daily_model_refresh: bool,
+    reference_time: pd.Timestamp | str | None = None,
 ) -> dict[str, Any]:
     updated = dict(prediction_record)
     updated["workflow_name"] = MARKET_HOURS_DAILY_WORKFLOW_NAME
     updated["workflow_variant"] = MARKET_HOURS_DAILY_WORKFLOW_VARIANT
     updated["daily_model_refresh"] = bool(daily_model_refresh)
-    updated["model_refresh_et_date"] = current_et_timestamp().date().isoformat()
+    updated["model_refresh_et_date"] = current_et_timestamp(reference_time).date().isoformat()
     updated["prediction_generated_at"] = updated.get("generated_at")
     return updated
 
@@ -161,16 +165,19 @@ def write_prediction_record(
     *,
     run_name: str,
     daily_model_refresh: bool,
-) -> None:
+    reference_time: pd.Timestamp | str | None = None,
+) -> dict[str, Any]:
     prediction_record = tournament.build_prediction_record(
         active_result=active_result,
         active_results_by_family=active_results_by_family,
         future_row=future_row,
         registered_model_name=registered_model_name,
+        generated_at=reference_time,
     )
     prediction_record = enrich_prediction_record(
         prediction_record,
         daily_model_refresh=daily_model_refresh,
+        reference_time=reference_time,
     )
     tournament.log_step("Write latest market-hours daily prediction metadata")
     MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.write_text(
@@ -201,6 +208,7 @@ def write_prediction_record(
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
     print(f"Final signal: {active_result['next_signal']}")
+    return prediction_record
 
 
 def load_registered_champions(
@@ -257,7 +265,8 @@ def run_prediction_only(
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
     champion_download_root: Path | None = None,
-) -> None:
+    reference_time: pd.Timestamp | str | None = None,
+) -> dict[str, Any]:
     tournament.log_step("Load registered family champions for ET market-hours prediction")
     active_results_by_family = load_registered_champions(
         client,
@@ -268,13 +277,14 @@ def run_prediction_only(
         champion_download_root=champion_download_root,
     )
     active_result = sorted(active_results_by_family.values(), key=tournament.ranking_key)[0]
-    write_prediction_record(
+    return write_prediction_record(
         active_result,
         active_results_by_family,
         future_row,
         registered_model_name,
         run_name="btc-directional-market-hours-daily-hourly-prediction",
         daily_model_refresh=False,
+        reference_time=reference_time,
     )
 
 
@@ -286,7 +296,7 @@ def run_full_refresh(
     valid_df: pd.DataFrame,
     future_row: pd.DataFrame,
     champion_download_root: Path | None = None,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, Any]:
     validation_start = valid_df["timestamp"].iloc[0].isoformat()
     validation_end = valid_df["timestamp"].iloc[-1].isoformat()
 
@@ -476,10 +486,12 @@ def run_full_refresh(
             active_results_by_family=active_results_by_family,
             future_row=future_row,
             registered_model_name=registered_model_name,
+            generated_at=getattr(args, "reference_time", None),
         )
         prediction_record = enrich_prediction_record(
             prediction_record,
             daily_model_refresh=True,
+            reference_time=getattr(args, "reference_time", None),
         )
         tournament.log_step("Write latest market-hours daily prediction metadata")
         MARKET_HOURS_DAILY_LAST_PREDICTION_PATH.write_text(
@@ -509,7 +521,7 @@ def run_full_refresh(
         f"Upcoming hour probability: {active_result['next_probability']:.1%} chance of UP"
     )
     print(f"Final signal: {active_result['next_signal']}")
-    return active_results_by_family
+    return prediction_record
 
 
 def write_failed_prediction_record(exc: Exception) -> None:
@@ -535,36 +547,44 @@ def write_failed_prediction_record(exc: Exception) -> None:
     )
 
 
-def main() -> None:
-    args = parse_args()
+def execute_market_hours_daily_workflow(
+    args: argparse.Namespace | None = None,
+    *,
+    raw: pd.DataFrame | None = None,
+    reference_time: pd.Timestamp | str | None = None,
+    replay_day_has_models: bool | None = None,
+) -> dict[str, Any] | None:
+    args = parse_args() if args is None else args
+    setattr(args, "reference_time", reference_time)
     configure_market_hours_daily_paths()
     tournament.log_step("Initialize ET market-hours daily BTC pipeline")
-    print(describe_window())
+    print(describe_window(reference_time))
 
-    if not should_run_prediction_window():
+    if not should_run_prediction_window(reference_time):
         print(
             "Skipping ET market-hours daily pipeline: "
             "the next target candle is outside 8am-8pm ET."
         )
-        return
+        return None
 
     tournament.set_seed()
-    registered_model_name = configure_market_hours_daily_tracking()
+    registered_model_name = configure_market_hours_daily_tracking(reference_time)
     client = MlflowClient()
-    _, train_df, valid_df, future_row = fetch_dataset()
+    _, train_df, valid_df, future_row = fetch_dataset(raw)
 
-    current_day_has_models = champions_trained_for_current_et_day(
-        client,
-        registered_model_name,
+    current_day_has_models = (
+        champions_trained_for_current_et_day(client, registered_model_name, reference_time)
+        if replay_day_has_models is None
+        else replay_day_has_models
     )
-    training_window_open = should_run_training_window()
+    training_window_open = should_run_training_window(reference_time)
     refresh_due = training_window_open and (args.force_refresh or not current_day_has_models)
     print(f"Training window open: {str(training_window_open).lower()}")
     print(f"Current ET day already has fresh champions: {str(current_day_has_models).lower()}")
     print(f"Daily model refresh due: {str(refresh_due).lower()}")
 
     if refresh_due:
-        run_full_refresh(
+        return run_full_refresh(
             args,
             client,
             registered_model_name,
@@ -572,22 +592,26 @@ def main() -> None:
             valid_df,
             future_row,
         )
-        return
 
     if not current_day_has_models:
         print(
             "Skipping ET market-hours daily prediction: "
             "no same-day champions are available and training is outside the allowed ET window."
         )
-        return
+        return None
 
-    run_prediction_only(
+    return run_prediction_only(
         client,
         registered_model_name,
         train_df,
         valid_df,
         future_row,
+        reference_time=reference_time,
     )
+
+
+def main() -> None:
+    execute_market_hours_daily_workflow()
 
 
 if __name__ == "__main__":

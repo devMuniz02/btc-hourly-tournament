@@ -229,7 +229,9 @@ def stage_and_commit_artifacts(
     run_git_command_in_dir(repo_root, "config", "user.email", "local-btc-bot@users.noreply.github.com")
 
     for path in existing_files:
-        add_result = run_git_command_in_dir(repo_root, "add", normalize_git_path(str(path.relative_to(repo_root))))
+        relative_path = normalize_git_path(str(path.relative_to(repo_root)))
+        add_args = ("add", "-f", relative_path) if path.suffix.lower() == ".log" else ("add", relative_path)
+        add_result = run_git_command_in_dir(repo_root, *add_args)
         if add_result.returncode != 0:
             print_git_result(add_result, print_fn)
             raise RuntimeError(f"Failed to stage artifact '{path.relative_to(repo_root)}'.")
