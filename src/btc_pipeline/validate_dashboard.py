@@ -116,6 +116,19 @@ def ensure_history_schema(history: pd.DataFrame) -> pd.DataFrame:
                 or column in {"model_predictions", "workflow_name", "workflow_variant", "model_refresh_et_date", "prediction_generated_at"}
                 else pd.NA
             )
+    for column in (
+        "actual",
+        "status",
+        "model_predictions",
+        "best_champion_name",
+        "best_champion_family",
+        "best_champion_version",
+        "workflow_name",
+        "workflow_variant",
+        "model_refresh_et_date",
+        "prediction_generated_at",
+    ):
+        updated[column] = updated[column].astype("object")
     return updated[HISTORY_COLUMNS]
 
 

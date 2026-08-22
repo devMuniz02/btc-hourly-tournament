@@ -12,8 +12,6 @@ on:
       - "pipelines/consolidated/**"
       - "artifacts/btc/**"
       - "artifacts/consolidated/**"
-  schedule:
-    - cron: "* * * * *"
   workflow_dispatch:
     inputs:
       only:
