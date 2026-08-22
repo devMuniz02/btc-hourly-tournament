@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - Old Baseline
 
-Generated at: 2026-08-22T05:01:33.667413+00:00
+Generated at: 2026-08-22T05:13:15.115886+00:00
 Scope: `old`
 
 ## Source Files
@@ -19,10 +19,10 @@ Scope: `old`
 | BTC Daily | artifacts/btc/daily/history.csv | 2026-03-21 04:00:00+00:00 to 2026-04-27 22:00:00+00:00 | 857 | 552 | 304 | 1 |
 | BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-04-27 23:00:00+00:00 | 441 | 326 | 114 | 1 |
 | BTC Market Hours Daily | artifacts/btc/market_hours_daily/history.csv | 2026-03-24 22:00:00+00:00 to 2026-04-27 22:00:00+00:00 | 443 | 380 | 61 | 2 |
-| Consolidated Market Hours Daily | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
 | Consolidated Hourly | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
 | Consolidated Daily/Hourly Refresh | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
 | Consolidated Market Hours | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
+| Consolidated Market Hours Daily | artifacts/consolidated/history.csv | n/a | 0 | 0 | 0 | 0 |
 
 ## Overall Ranking
 
@@ -99,10 +99,6 @@ Scope: `old`
 | BTC Market Hours Daily | rf | RandomForest | 380 | 153 | 227 | 40.26% | 37.08% | 40.26% | 9.74 pp | -74 | 34 | -2.18 |
 | BTC Market Hours Daily | xgb | XGBoost | 380 | 149 | 231 | 39.21% | 37.08% | 39.21% | 10.79 pp | -82 | 34 | -2.41 |
 
-### Consolidated Market Hours Daily
-
-_No model-level predictions available for this variation._
-
 ### Consolidated Hourly
 
 _No model-level predictions available for this variation._
@@ -112,6 +108,10 @@ _No model-level predictions available for this variation._
 _No model-level predictions available for this variation._
 
 ### Consolidated Market Hours
+
+_No model-level predictions available for this variation._
+
+### Consolidated Market Hours Daily
 
 _No model-level predictions available for this variation._
 
