@@ -67,7 +67,7 @@ def sanitize_prediction_record(
     updated["target_candle_timestamp"] = target_timestamp.isoformat()
     if not updated.get("reference_candle_timestamp"):
         updated["reference_candle_timestamp"] = (
-            target_timestamp - pd.Timedelta(hours=1)
+            target_timestamp - pd.Timedelta(value=1, unit="h")
         ).isoformat()
     return updated
 
@@ -81,13 +81,13 @@ def ensure_recent_history_slots_market_hours(
     hours: int = 10,
 ) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
-    latest_available_target = now_utc.floor("h") - pd.Timedelta(hours=1)
+    latest_available_target = now_utc.floor("h") - pd.Timedelta(value=1, unit="h")
     expected_timestamps: list[pd.Timestamp] = []
     cursor = latest_available_target
     while len(expected_timestamps) < hours:
         if is_allowed_prediction_target_timestamp(cursor):
             expected_timestamps.append(cursor)
-        cursor -= pd.Timedelta(hours=1)
+        cursor -= pd.Timedelta(value=1, unit="h")
 
     updated = history.copy()
     existing_timestamps = set()
@@ -132,7 +132,7 @@ def ensure_recent_history_slots_market_hours(
     if updated.empty:
         updated = missing_frame
     else:
-        updated = pd.concat([dashboard.ensure_history_schema(updated), missing_frame], ignore_index=True)
+        updated = dashboard.append_history_frame(updated, missing_frame)
     updated = updated.sort_values("timestamp").reset_index(drop=True)
     updated.to_csv(dashboard.HISTORY_PATH, index=False)
     return updated

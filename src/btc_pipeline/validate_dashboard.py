@@ -253,8 +253,8 @@ def get_resolved_hour_prices(
     indexed: pd.DataFrame,
     target_ts: pd.Timestamp,
 ) -> tuple[float, float] | None:
-    reference_ts = target_ts - pd.Timedelta(hours=1)
-    prior_ts = target_ts - pd.Timedelta(hours=2)
+    reference_ts = target_ts - pd.Timedelta(value=1, unit="h")
+    prior_ts = target_ts - pd.Timedelta(value=2, unit="h")
     if reference_ts not in indexed.index:
         return None
 
@@ -371,9 +371,9 @@ def remove_incomplete_validations(history: pd.DataFrame) -> pd.DataFrame:
 
 def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
-    latest_available_target = now_utc.floor("h") - pd.Timedelta(hours=1)
+    latest_available_target = now_utc.floor("h") - pd.Timedelta(value=1, unit="h")
     expected_timestamps = [
-        latest_available_target - pd.Timedelta(hours=offset)
+        latest_available_target - pd.Timedelta(value=offset, unit="h")
         for offset in range(hours)
     ]
 
@@ -440,7 +440,7 @@ def compute_stats(history: pd.DataFrame) -> dict[str, int]:
         }
 
     now = pd.Timestamp.utcnow()
-    last_24h_cutoff = now - pd.Timedelta(hours=24)
+    last_24h_cutoff = now - pd.Timedelta(value=24, unit="h")
     counted = history[
         (history["status"] != "missing")
         & (history["predicted"].fillna("").astype(str) != "")
@@ -687,8 +687,8 @@ def transform_history_for_dashboard(
         invert_binary_label
     )
 
-    actual_numeric = pd.to_numeric(transformed["actual"], errors="coerce")
-    predicted_numeric = pd.to_numeric(transformed["predicted"], errors="coerce")
+    actual_numeric = transformed["actual"].apply(parse_binary_label)
+    predicted_numeric = transformed["predicted"].apply(parse_binary_label)
     reversible_result_mask = reversible_mask & actual_numeric.notna() & predicted_numeric.notna()
     transformed.loc[reversible_result_mask, "result"] = (
         predicted_numeric.loc[reversible_result_mask].astype(int)
@@ -825,10 +825,11 @@ def render_dashboard(
 
     ax_trend.set_title("Per-Model Accuracy Across Time", fontsize=15, weight="bold", pad=12)
     scored = history.sort_values("timestamp").copy()
+    scored["actual_label_for_chart"] = scored["actual"].apply(parse_binary_label)
     scored = scored[
         (pd.to_numeric(scored["failed"], errors="coerce").fillna(0) == 0)
         & (scored["status"] != "missing")
-        & (pd.to_numeric(scored["actual"], errors="coerce").notna())
+        & scored["actual_label_for_chart"].notna()
     ].copy()
     plotted = False
     for index, family in enumerate(model_families):
@@ -839,7 +840,7 @@ def render_dashboard(
         for _, row in scored.iterrows():
             model_payload = parse_model_predictions(row.get("model_predictions")).get(family, {})
             predicted_label = model_payload.get("predicted_label")
-            actual_label = parse_binary_label(row.get("actual"))
+            actual_label = row.get("actual_label_for_chart")
             if predicted_label is None or actual_label is None:
                 continue
             total += 1
@@ -893,7 +894,7 @@ def render_dashboard(
         for _, row in recent_history.iterrows():
             model_payloads = parse_model_predictions(row.get("model_predictions"))
             row_values = [
-                format_dual_time(pd.Timestamp(row["timestamp"]) - pd.Timedelta(hours=1)),
+                format_dual_time(pd.Timestamp(row["timestamp"]) - pd.Timedelta(value=1, unit="h")),
                 f"{float(row['reference_open']):,.2f}" if pd.notna(row["reference_open"]) else "--",
                 f"{float(row['reference_close']):,.2f}" if pd.notna(row["reference_close"]) else "--",
             ]
