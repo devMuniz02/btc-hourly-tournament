@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -8,6 +9,22 @@ from src.btc_pipeline import validate_dashboard as dashboard
 
 
 class DashboardHistoryTransformTests(unittest.TestCase):
+    def test_skip_missing_slots_env_keeps_history_unchanged(self) -> None:
+        history = dashboard.build_history_frame(
+            [
+                {
+                    "timestamp": "2026-08-21T12:00:00+00:00",
+                    "status": "validated",
+                }
+            ]
+        )
+
+        with patch.dict("os.environ", {"BTC_DASHBOARD_SKIP_MISSING_SLOTS": "1"}):
+            updated = dashboard.ensure_recent_history_slots(history, hours=10)
+
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated.iloc[0]["timestamp"], history.iloc[0]["timestamp"])
+
     def test_reverse_dashboard_recomputes_text_label_results(self) -> None:
         history = dashboard.build_history_frame(
             [

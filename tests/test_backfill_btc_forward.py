@@ -554,6 +554,24 @@ class BackfillManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "manifest target"):
             backfill.enrich_live_replay_record(hourly, record, target)
 
+    def test_refresh_dashboards_disables_missing_slot_injection(self) -> None:
+        calls: list[dict[str, str]] = []
+
+        def fake_run(*_: object, **kwargs: object) -> None:
+            env = kwargs.get("env")
+            self.assertIsInstance(env, dict)
+            calls.append(env)  # type: ignore[arg-type]
+
+        with patch.object(backfill.subprocess, "run", side_effect=fake_run), \
+            patch.object(backfill.Path, "exists", return_value=False):
+            refreshed = backfill.refresh_dashboards()
+
+        self.assertEqual(refreshed, [])
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(
+            all(call.get("BTC_DASHBOARD_SKIP_MISSING_SLOTS") == "1" for call in calls)
+        )
+
     def test_live_daily_prediction_only_reloads_registry_champions(self) -> None:
         variation = backfill.Variation(
             label="BTC Daily",

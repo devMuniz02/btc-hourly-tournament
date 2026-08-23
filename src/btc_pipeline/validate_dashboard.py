@@ -6,6 +6,7 @@ Validate the prior BTC directional prediction and render a simple dashboard.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -370,6 +371,8 @@ def remove_incomplete_validations(history: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_recent_history_slots(history: pd.DataFrame, hours: int = 10) -> pd.DataFrame:
+    if os.environ.get("BTC_DASHBOARD_SKIP_MISSING_SLOTS", "").strip().lower() in {"1", "true", "yes"}:
+        return history
     now_utc = pd.Timestamp.now(tz="UTC")
     latest_available_target = now_utc.floor("h") - pd.Timedelta(value=1, unit="h")
     expected_timestamps = [

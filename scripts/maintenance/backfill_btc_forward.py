@@ -1753,8 +1753,12 @@ def refresh_dashboards() -> list[Path]:
         ROOT / "pipelines/consolidated/validate_dashboard.py",
     ]
     refreshed: list[Path] = []
+    env = {
+        **os.environ,
+        "BTC_DASHBOARD_SKIP_MISSING_SLOTS": "1",
+    }
     for script in dashboard_scripts:
-        subprocess.run([sys.executable, str(script)], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, str(script)], cwd=ROOT, check=True, env=env)
     for root in (ROOT / "assets/btc", ROOT / "assets/consolidated"):
         if root.exists():
             refreshed.extend(path for path in root.rglob("*.png") if path.is_file())
