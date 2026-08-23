@@ -62,6 +62,17 @@ def _parse_timestamp_sort_key(value: str) -> tuple[int, datetime | str]:
         return (1, text)
 
 
+def _csv_timestamp_column(fieldnames: list[str]) -> str:
+    for column in ("timestamp", "target_candle_timestamp"):
+        if column in fieldnames:
+            return column
+    return "timestamp"
+
+
+def _is_missing_row(row: dict[str, str]) -> bool:
+    return str(row.get("status", "")).strip().lower() == "missing"
+
+
 def merge_csv_contents(remote_text: str, local_text: str) -> str:
     remote_reader = csv.DictReader(io.StringIO(remote_text))
     local_reader = csv.DictReader(io.StringIO(local_text))
@@ -75,18 +86,29 @@ def merge_csv_contents(remote_text: str, local_text: str) -> str:
         if name not in fieldnames:
             fieldnames.append(name)
 
+    timestamp_column = _csv_timestamp_column(fieldnames)
     remote_by_timestamp = {
-        str(row.get("timestamp", "")).strip(): row
+        str(row.get(timestamp_column, "")).strip(): row
         for row in remote_rows
-        if str(row.get("timestamp", "")).strip()
+        if str(row.get(timestamp_column, "")).strip()
     }
     merged_rows = list(remote_rows)
+    merged_index_by_timestamp = {
+        str(row.get(timestamp_column, "")).strip(): index
+        for index, row in enumerate(merged_rows)
+        if str(row.get(timestamp_column, "")).strip()
+    }
     for row in local_rows:
-        timestamp = str(row.get("timestamp", "")).strip()
+        timestamp = str(row.get(timestamp_column, "")).strip()
         if timestamp and timestamp not in remote_by_timestamp:
             merged_rows.append(row)
+            continue
+        if timestamp and timestamp in merged_index_by_timestamp:
+            remote_row = merged_rows[merged_index_by_timestamp[timestamp]]
+            if _is_missing_row(remote_row) and not _is_missing_row(row):
+                merged_rows[merged_index_by_timestamp[timestamp]] = row
 
-    merged_rows.sort(key=lambda row: _parse_timestamp_sort_key(str(row.get("timestamp", "")).strip()))
+    merged_rows.sort(key=lambda row: _parse_timestamp_sort_key(str(row.get(timestamp_column, "")).strip()))
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
@@ -107,7 +129,20 @@ def _is_empty_json_value(value: Any) -> bool:
     return False
 
 
+def _json_timestamp(value: Any) -> tuple[int, datetime | str] | None:
+    if not isinstance(value, dict):
+        return None
+    for key in ("target_candle_timestamp", "timestamp"):
+        if key in value:
+            return _parse_timestamp_sort_key(str(value.get(key, "")).strip())
+    return None
+
+
 def merge_json_objects(remote_value: Any, local_value: Any) -> Any:
+    remote_timestamp = _json_timestamp(remote_value)
+    local_timestamp = _json_timestamp(local_value)
+    if remote_timestamp is not None and local_timestamp is not None and local_timestamp > remote_timestamp:
+        return json.loads(json.dumps(local_value))
     if isinstance(remote_value, dict) and isinstance(local_value, dict):
         merged = json.loads(json.dumps(remote_value))
         for key, local_item in local_value.items():

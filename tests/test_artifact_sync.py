@@ -65,6 +65,36 @@ class ArtifactSyncTests(unittest.TestCase):
             merged.index("2026-04-27T12:00:00+00:00,local-only"),
         )
 
+    def test_merge_csv_contents_uses_target_candle_timestamp(self) -> None:
+        remote_text = (
+            "target_candle_timestamp,status,predicted_signal\n"
+            "2026-04-28T00:00:00+00:00,validated,UP\n"
+        )
+        local_text = (
+            "target_candle_timestamp,status,predicted_signal\n"
+            "2026-04-28T01:00:00+00:00,validated,DOWN\n"
+        )
+
+        merged = artifact_sync.merge_csv_contents(remote_text, local_text)
+
+        self.assertIn("2026-04-28T00:00:00+00:00,validated,UP", merged)
+        self.assertIn("2026-04-28T01:00:00+00:00,validated,DOWN", merged)
+
+    def test_merge_csv_contents_replaces_missing_placeholder_with_real_row(self) -> None:
+        remote_text = (
+            "target_candle_timestamp,status,predicted_signal\n"
+            "2026-04-28T01:00:00+00:00,missing,\n"
+        )
+        local_text = (
+            "target_candle_timestamp,status,predicted_signal\n"
+            "2026-04-28T01:00:00+00:00,validated,DOWN\n"
+        )
+
+        merged = artifact_sync.merge_csv_contents(remote_text, local_text)
+
+        self.assertIn("2026-04-28T01:00:00+00:00,validated,DOWN", merged)
+        self.assertNotIn("2026-04-28T01:00:00+00:00,missing,", merged)
+
     def test_merge_json_contents_preserves_remote_and_fills_missing(self) -> None:
         remote_text = json.dumps(
             {
@@ -92,6 +122,27 @@ class ArtifactSyncTests(unittest.TestCase):
         self.assertEqual(merged["error"], "boom")
         self.assertEqual(merged["nested"]["keep"], "remote")
         self.assertEqual(merged["nested"]["extra"], "value")
+
+    def test_merge_json_contents_uses_newer_target_prediction(self) -> None:
+        remote_text = json.dumps(
+            {
+                "target_candle_timestamp": "2026-04-28T00:00:00+00:00",
+                "predicted_signal": "UP",
+            }
+        )
+        local_text = json.dumps(
+            {
+                "target_candle_timestamp": "2026-04-28T01:00:00+00:00",
+                "predicted_signal": "DOWN",
+                "model_predictions": {"xgb": {"probability_up": 0.4}},
+            }
+        )
+
+        merged = json.loads(artifact_sync.merge_json_contents(remote_text, local_text))
+
+        self.assertEqual(merged["target_candle_timestamp"], "2026-04-28T01:00:00+00:00")
+        self.assertEqual(merged["predicted_signal"], "DOWN")
+        self.assertIn("xgb", merged["model_predictions"])
 
     def test_sync_artifacts_from_remote_merges_artifacts_without_touching_unrelated_files(self) -> None:
         repo = self.temp_root / "sync-repo"
