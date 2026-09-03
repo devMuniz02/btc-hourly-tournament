@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - All Rows
 
-Generated at: 2026-09-03T23:07:54.150282+00:00
+Generated at: 2026-09-03T23:19:32.278186+00:00
 Scope: `all`
 
 ## Source Files
@@ -33,8 +33,8 @@ Scope: `all`
 | Consolidated Hourly | rf | RandomForest | 139 | 71 | 68 | 51.08% | 51.08% | 51.08% | 1.08 pp | 3 | 11 | 0.27 |
 | Consolidated Daily/Hourly Refresh | rf | RandomForest | 139 | 71 | 68 | 51.08% | 51.08% | 51.08% | 1.08 pp | 3 | 11 | 0.27 |
 | Consolidated Market Hours Daily | rf | RandomForest | 32 | 16 | 16 | 50.00% | 50.00% | 50.00% | 0.00 pp | 0 | 3 | 0.00 |
-| Consolidated Hourly | xgb | XGBoost | 139 | 69 | 70 | 49.64% | 49.64% | 49.64% | 0.36 pp | -1 | 11 | -0.09 |
-| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 139 | 69 | 70 | 49.64% | 49.64% | 49.64% | 0.36 pp | -1 | 11 | -0.09 |
+| Consolidated Hourly | xgb | XGBoost | 139 | 68 | 71 | 48.92% | 48.92% | 48.92% | 1.08 pp | -3 | 11 | -0.27 |
+| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 139 | 68 | 71 | 48.92% | 48.92% | 48.92% | 1.08 pp | -3 | 11 | -0.27 |
 | Consolidated Market Hours | rf | RandomForest | 31 | 15 | 16 | 48.39% | 48.39% | 48.39% | 1.61 pp | -1 | 3 | -0.33 |
 | BTC Market Hours | mlp_sklearn | MLPClassifier | 491 | 236 | 255 | 48.07% | 44.17% | 48.12% | 1.93 pp | -19 | 47 | -0.40 |
 | BTC Daily | mlp_sklearn | MLPClassifier | 719 | 348 | 371 | 48.40% | 47.08% | 48.33% | 1.60 pp | -23 | 43 | -0.53 |
@@ -128,7 +128,7 @@ Scope: `all`
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Consolidated Hourly | rf | RandomForest | 139 | 71 | 68 | 51.08% | 51.08% | 51.08% | 1.08 pp | 3 | 11 | 0.27 |
-| Consolidated Hourly | xgb | XGBoost | 139 | 69 | 70 | 49.64% | 49.64% | 49.64% | 0.36 pp | -1 | 11 | -0.09 |
+| Consolidated Hourly | xgb | XGBoost | 139 | 68 | 71 | 48.92% | 48.92% | 48.92% | 1.08 pp | -3 | 11 | -0.27 |
 | Consolidated Hourly | mlp_sklearn | MLPClassifier | 139 | 66 | 73 | 47.48% | 47.48% | 47.48% | 2.52 pp | -7 | 11 | -0.64 |
 | Consolidated Hourly | lstm | LSTM | 139 | 63 | 76 | 45.32% | 45.32% | 45.32% | 4.68 pp | -13 | 11 | -1.18 |
 | Consolidated Hourly | nn | NN | 139 | 62 | 77 | 44.60% | 44.60% | 44.60% | 5.40 pp | -15 | 11 | -1.36 |
@@ -139,7 +139,7 @@ Scope: `all`
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Consolidated Daily/Hourly Refresh | rf | RandomForest | 139 | 71 | 68 | 51.08% | 51.08% | 51.08% | 1.08 pp | 3 | 11 | 0.27 |
-| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 139 | 69 | 70 | 49.64% | 49.64% | 49.64% | 0.36 pp | -1 | 11 | -0.09 |
+| Consolidated Daily/Hourly Refresh | xgb | XGBoost | 139 | 68 | 71 | 48.92% | 48.92% | 48.92% | 1.08 pp | -3 | 11 | -0.27 |
 | Consolidated Daily/Hourly Refresh | mlp_sklearn | MLPClassifier | 139 | 66 | 73 | 47.48% | 47.48% | 47.48% | 2.52 pp | -7 | 11 | -0.64 |
 | Consolidated Daily/Hourly Refresh | lstm | LSTM | 139 | 63 | 76 | 45.32% | 45.32% | 45.32% | 4.68 pp | -13 | 11 | -1.18 |
 | Consolidated Daily/Hourly Refresh | nn | NN | 139 | 62 | 77 | 44.60% | 44.60% | 44.60% | 5.40 pp | -15 | 11 | -1.36 |
