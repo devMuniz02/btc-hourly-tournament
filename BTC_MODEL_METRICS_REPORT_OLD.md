@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - Old Baseline
 
-Generated at: 2026-09-04T05:03:28.546996+00:00
+Generated at: 2026-09-04T05:13:23.423201+00:00
 Scope: `old`
 
 ## Source Files
