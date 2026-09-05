@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - NEWTEST
 
-Generated at: 2026-09-05T09:47:08.688369+00:00
+Generated at: 2026-09-05T09:54:03.841883+00:00
 Scope: `newtest`
 
 ## Source Files
