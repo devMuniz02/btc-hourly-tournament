@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - New Forward Rows
 
-Generated at: 2026-09-07T13:43:52.134469+00:00
+Generated at: 2026-09-07T13:53:41.899393+00:00
 Scope: `new`
 
 ## Source Files
