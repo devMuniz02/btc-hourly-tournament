@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - All Rows
 
-Generated at: 2026-09-07T07:36:00.944936+00:00
+Generated at: 2026-09-07T07:46:17.593415+00:00
 Scope: `all`
 
 ## Source Files
