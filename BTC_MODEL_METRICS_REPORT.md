@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - All Rows
 
-Generated at: 2026-09-08T09:14:53.264678+00:00
+Generated at: 2026-09-08T09:27:55.715831+00:00
 Scope: `all`
 
 ## Source Files
@@ -61,9 +61,9 @@ Scope: `all`
 | BTC Market Hours | xgb | XGBoost | 563 | 240 | 323 | 42.63% | 45.83% | 43.12% | 7.37 pp | -83 | 53 | -1.57 |
 | Consolidated Market Hours Daily | transformer | Transformer | 68 | 29 | 39 | 42.65% | 42.65% | 42.65% | 7.35 pp | -10 | 6 | -1.67 |
 | BTC Market Hours Daily | rf | RandomForest | 617 | 258 | 359 | 41.82% | 44.17% | 40.83% | 8.18 pp | -101 | 53 | -1.91 |
+| Consolidated Hourly | transformer | Transformer | 205 | 89 | 116 | 43.41% | 43.41% | 43.41% | 6.59 pp | -27 | 14 | -1.93 |
+| Consolidated Daily/Hourly Refresh | transformer | Transformer | 205 | 89 | 116 | 43.41% | 43.41% | 43.41% | 6.59 pp | -27 | 14 | -1.93 |
 | Consolidated Market Hours Daily | mlp_sklearn | MLPClassifier | 68 | 28 | 40 | 41.18% | 41.18% | 41.18% | 8.82 pp | -12 | 6 | -2.00 |
-| Consolidated Hourly | transformer | Transformer | 205 | 88 | 117 | 42.93% | 42.93% | 42.93% | 7.07 pp | -29 | 14 | -2.07 |
-| Consolidated Daily/Hourly Refresh | transformer | Transformer | 205 | 88 | 117 | 42.93% | 42.93% | 42.93% | 7.07 pp | -29 | 14 | -2.07 |
 | BTC Market Hours Daily | lstm | LSTM | 617 | 252 | 365 | 40.84% | 40.83% | 40.42% | 9.16 pp | -113 | 53 | -2.13 |
 | BTC Market Hours Daily | xgb | XGBoost | 617 | 252 | 365 | 40.84% | 43.33% | 40.62% | 9.16 pp | -113 | 53 | -2.13 |
 | Consolidated Market Hours | mlp_sklearn | MLPClassifier | 67 | 27 | 40 | 40.30% | 40.30% | 40.30% | 9.70 pp | -13 | 6 | -2.17 |
@@ -132,7 +132,7 @@ Scope: `all`
 | Consolidated Hourly | xgb | XGBoost | 205 | 94 | 111 | 45.85% | 45.85% | 45.85% | 4.15 pp | -17 | 14 | -1.21 |
 | Consolidated Hourly | lstm | LSTM | 205 | 93 | 112 | 45.37% | 45.37% | 45.37% | 4.63 pp | -19 | 14 | -1.36 |
 | Consolidated Hourly | nn | NN | 205 | 92 | 113 | 44.88% | 44.88% | 44.88% | 5.12 pp | -21 | 14 | -1.50 |
-| Consolidated Hourly | transformer | Transformer | 205 | 88 | 117 | 42.93% | 42.93% | 42.93% | 7.07 pp | -29 | 14 | -2.07 |
+| Consolidated Hourly | transformer | Transformer | 205 | 89 | 116 | 43.41% | 43.41% | 43.41% | 6.59 pp | -27 | 14 | -1.93 |
 
 ### Consolidated Daily/Hourly Refresh
 
@@ -143,7 +143,7 @@ Scope: `all`
 | Consolidated Daily/Hourly Refresh | xgb | XGBoost | 205 | 94 | 111 | 45.85% | 45.85% | 45.85% | 4.15 pp | -17 | 14 | -1.21 |
 | Consolidated Daily/Hourly Refresh | lstm | LSTM | 205 | 93 | 112 | 45.37% | 45.37% | 45.37% | 4.63 pp | -19 | 14 | -1.36 |
 | Consolidated Daily/Hourly Refresh | nn | NN | 205 | 92 | 113 | 44.88% | 44.88% | 44.88% | 5.12 pp | -21 | 14 | -1.50 |
-| Consolidated Daily/Hourly Refresh | transformer | Transformer | 205 | 88 | 117 | 42.93% | 42.93% | 42.93% | 7.07 pp | -29 | 14 | -2.07 |
+| Consolidated Daily/Hourly Refresh | transformer | Transformer | 205 | 89 | 116 | 43.41% | 43.41% | 43.41% | 6.59 pp | -27 | 14 | -1.93 |
 
 ### Consolidated Market Hours
 
