@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - All Rows
 
-Generated at: 2026-09-09T14:59:15.335238+00:00
+Generated at: 2026-09-09T15:09:14.309231+00:00
 Scope: `all`
 
 ## Source Files
@@ -17,8 +17,8 @@ Scope: `all`
 | --- | --- | --- | --- | --- | --- | --- |
 | BTC Hourly | artifacts/btc/hourly/history.csv | 2026-03-16 15:00:00+00:00 to 2026-08-23 15:00:00+00:00 | 1310 | 1022 | 288 | 0 |
 | BTC Daily | artifacts/btc/daily/history.csv | 2026-03-21 04:00:00+00:00 to 2026-08-23 15:00:00+00:00 | 1186 | 821 | 364 | 1 |
-| BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-09 13:00:00+00:00 | 921 | 583 | 337 | 1 |
-| BTC Market Hours Daily | artifacts/btc/market_hours_daily/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-09 13:00:00+00:00 | 923 | 637 | 284 | 2 |
+| BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-09 14:00:00+00:00 | 922 | 583 | 338 | 1 |
+| BTC Market Hours Daily | artifacts/btc/market_hours_daily/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-09 14:00:00+00:00 | 924 | 637 | 285 | 2 |
 | Consolidated Hourly | artifacts/consolidated/history.csv | 2026-05-18T07:00:00+00:00 to 2026-05-31T22:00:00+00:00 | 225 | 0 | 0 | 0 |
 | Consolidated Daily/Hourly Refresh | artifacts/consolidated/history.csv | 2026-05-18T07:00:00+00:00 to 2026-05-31T22:00:00+00:00 | 225 | 0 | 0 | 0 |
 | Consolidated Market Hours | artifacts/consolidated/history.csv | 2026-05-18T07:00:00+00:00 to 2026-05-31T22:00:00+00:00 | 225 | 0 | 0 | 0 |
