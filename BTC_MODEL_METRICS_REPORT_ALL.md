@@ -1,6 +1,6 @@
 # BTC Model Metrics Report - All Rows
 
-Generated at: 2026-09-11T20:06:24.880599+00:00
+Generated at: 2026-09-11T20:16:35.794398+00:00
 Scope: `all`
 
 ## Source Files
@@ -16,8 +16,8 @@ Scope: `all`
 | Variation | Source File | Date Range | Rows | Validated | Missing | Failed |
 | --- | --- | --- | --- | --- | --- | --- |
 | BTC Hourly | artifacts/btc/hourly/history.csv | 2026-03-16 15:00:00+00:00 to 2026-08-23 15:00:00+00:00 | 1345 | 1057 | 288 | 0 |
-| BTC Daily | artifacts/btc/daily/history.csv | 2026-03-21 04:00:00+00:00 to 2026-08-23 15:00:00+00:00 | 1220 | 855 | 364 | 1 |
-| BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-11 19:00:00+00:00 | 987 | 617 | 369 | 1 |
+| BTC Daily | artifacts/btc/daily/history.csv | 2026-03-21 04:00:00+00:00 to 2026-08-23 15:00:00+00:00 | 1221 | 856 | 364 | 1 |
+| BTC Market Hours | artifacts/btc/market_hours/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-11 19:00:00+00:00 | 988 | 618 | 369 | 1 |
 | BTC Market Hours Daily | artifacts/btc/market_hours_daily/history.csv | 2026-03-24 22:00:00+00:00 to 2026-09-11 19:00:00+00:00 | 989 | 671 | 316 | 2 |
 | Consolidated Hourly | artifacts/consolidated/history.csv | 2026-05-18 07:00:00+00:00 to 2026-06-02 13:00:00+00:00 | 255 | 255 | 0 | 0 |
 | Consolidated Daily/Hourly Refresh | artifacts/consolidated/history.csv | 2026-05-18 07:00:00+00:00 to 2026-06-02 13:00:00+00:00 | 255 | 255 | 0 | 0 |
@@ -28,30 +28,30 @@ Scope: `all`
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| BTC Market Hours | mlp_sklearn | MLPClassifier | 617 | 297 | 320 | 48.14% | 46.67% | 47.29% | 1.86 pp | -23 | 57 | -0.40 |
-| BTC Market Hours | nn | NN | 617 | 295 | 322 | 47.81% | 50.42% | 49.58% | 2.19 pp | -27 | 57 | -0.47 |
+| BTC Market Hours | mlp_sklearn | MLPClassifier | 618 | 297 | 321 | 48.06% | 46.25% | 47.08% | 1.94 pp | -24 | 57 | -0.42 |
+| BTC Market Hours | nn | NN | 618 | 296 | 322 | 47.90% | 50.42% | 49.79% | 2.10 pp | -26 | 57 | -0.46 |
 | BTC Market Hours Daily | nn | NN | 671 | 317 | 354 | 47.24% | 50.42% | 48.75% | 2.76 pp | -37 | 57 | -0.65 |
-| BTC Market Hours | transformer | Transformer | 617 | 288 | 329 | 46.68% | 46.25% | 45.62% | 3.32 pp | -41 | 57 | -0.72 |
+| BTC Market Hours | transformer | Transformer | 618 | 288 | 330 | 46.60% | 46.25% | 45.42% | 3.40 pp | -42 | 57 | -0.74 |
 | BTC Market Hours Daily | mlp_sklearn | MLPClassifier | 671 | 314 | 357 | 46.80% | 49.17% | 47.29% | 3.20 pp | -43 | 57 | -0.75 |
 | BTC Market Hours Daily | transformer | Transformer | 671 | 311 | 360 | 46.35% | 47.92% | 47.71% | 3.65 pp | -49 | 57 | -0.86 |
-| BTC Daily | mlp_sklearn | MLPClassifier | 845 | 400 | 445 | 47.34% | 43.33% | 45.83% | 2.66 pp | -45 | 48 | -0.94 |
+| BTC Daily | mlp_sklearn | MLPClassifier | 846 | 401 | 445 | 47.40% | 43.33% | 45.83% | 2.60 pp | -44 | 48 | -0.92 |
 | Consolidated Hourly | rf | RandomForest | 255 | 120 | 135 | 47.06% | 46.67% | 47.06% | 2.94 pp | -15 | 16 | -0.94 |
 | Consolidated Daily/Hourly Refresh | rf | RandomForest | 255 | 120 | 135 | 47.06% | 46.67% | 47.06% | 2.94 pp | -15 | 16 | -0.94 |
 | BTC Hourly | mlp_sklearn | MLPClassifier | 1023 | 483 | 540 | 47.21% | 46.25% | 45.83% | 2.79 pp | -57 | 53 | -1.08 |
-| BTC Daily | nn | NN | 845 | 394 | 451 | 46.63% | 45.83% | 45.21% | 3.37 pp | -57 | 48 | -1.19 |
+| BTC Daily | nn | NN | 846 | 395 | 451 | 46.69% | 45.83% | 45.21% | 3.31 pp | -56 | 48 | -1.17 |
 | BTC Hourly | transformer | Transformer | 1023 | 480 | 543 | 46.92% | 46.67% | 45.00% | 3.08 pp | -63 | 53 | -1.19 |
 | Consolidated Market Hours | transformer | Transformer | 94 | 42 | 52 | 44.68% | 44.68% | 44.68% | 5.32 pp | -10 | 8 | -1.25 |
 | Consolidated Market Hours Daily | transformer | Transformer | 94 | 42 | 52 | 44.68% | 44.68% | 44.68% | 5.32 pp | -10 | 8 | -1.25 |
 | Consolidated Hourly | lstm | LSTM | 255 | 117 | 138 | 45.88% | 45.00% | 45.88% | 4.12 pp | -21 | 16 | -1.31 |
 | Consolidated Daily/Hourly Refresh | lstm | LSTM | 255 | 117 | 138 | 45.88% | 45.00% | 45.88% | 4.12 pp | -21 | 16 | -1.31 |
-| BTC Daily | transformer | Transformer | 845 | 389 | 456 | 46.04% | 38.33% | 44.38% | 3.96 pp | -67 | 48 | -1.40 |
+| BTC Daily | transformer | Transformer | 846 | 390 | 456 | 46.10% | 38.33% | 44.38% | 3.90 pp | -66 | 48 | -1.38 |
 | Consolidated Hourly | mlp_sklearn | MLPClassifier | 255 | 116 | 139 | 45.49% | 44.58% | 45.49% | 4.51 pp | -23 | 16 | -1.44 |
 | Consolidated Daily/Hourly Refresh | mlp_sklearn | MLPClassifier | 255 | 116 | 139 | 45.49% | 44.58% | 45.49% | 4.51 pp | -23 | 16 | -1.44 |
-| BTC Market Hours | lstm | LSTM | 617 | 265 | 352 | 42.95% | 43.33% | 43.33% | 7.05 pp | -87 | 57 | -1.53 |
-| BTC Market Hours | rf | RandomForest | 617 | 264 | 353 | 42.79% | 43.33% | 41.88% | 7.21 pp | -89 | 57 | -1.56 |
+| BTC Market Hours | lstm | LSTM | 618 | 265 | 353 | 42.88% | 42.92% | 43.33% | 7.12 pp | -88 | 57 | -1.54 |
+| BTC Market Hours | rf | RandomForest | 618 | 265 | 353 | 42.88% | 43.75% | 42.08% | 7.12 pp | -88 | 57 | -1.54 |
 | Consolidated Hourly | transformer | Transformer | 255 | 115 | 140 | 45.10% | 44.17% | 45.10% | 4.90 pp | -25 | 16 | -1.56 |
 | Consolidated Daily/Hourly Refresh | transformer | Transformer | 255 | 115 | 140 | 45.10% | 44.17% | 45.10% | 4.90 pp | -25 | 16 | -1.56 |
-| BTC Market Hours | xgb | XGBoost | 617 | 262 | 355 | 42.46% | 46.25% | 42.71% | 7.54 pp | -93 | 57 | -1.63 |
+| BTC Market Hours | xgb | XGBoost | 618 | 263 | 355 | 42.56% | 46.67% | 42.71% | 7.44 pp | -92 | 57 | -1.61 |
 | Consolidated Market Hours | rf | RandomForest | 94 | 40 | 54 | 42.55% | 42.55% | 42.55% | 7.45 pp | -14 | 8 | -1.75 |
 | Consolidated Market Hours Daily | rf | RandomForest | 94 | 40 | 54 | 42.55% | 42.55% | 42.55% | 7.45 pp | -14 | 8 | -1.75 |
 | BTC Market Hours Daily | rf | RandomForest | 671 | 279 | 392 | 41.58% | 43.75% | 41.67% | 8.42 pp | -113 | 57 | -1.98 |
@@ -59,14 +59,14 @@ Scope: `all`
 | BTC Market Hours Daily | xgb | XGBoost | 671 | 275 | 396 | 40.98% | 43.75% | 41.25% | 9.02 pp | -121 | 57 | -2.12 |
 | BTC Hourly | nn | NN | 1023 | 449 | 574 | 43.89% | 40.42% | 40.42% | 6.11 pp | -125 | 53 | -2.36 |
 | BTC Hourly | rf | RandomForest | 1023 | 447 | 576 | 43.70% | 40.42% | 42.08% | 6.30 pp | -129 | 53 | -2.43 |
-| BTC Daily | lstm | LSTM | 845 | 357 | 488 | 42.25% | 36.25% | 40.00% | 7.75 pp | -131 | 48 | -2.73 |
+| BTC Daily | lstm | LSTM | 846 | 357 | 489 | 42.20% | 36.25% | 39.79% | 7.80 pp | -132 | 48 | -2.75 |
 | Consolidated Market Hours | nn | NN | 94 | 36 | 58 | 38.30% | 38.30% | 38.30% | 11.70 pp | -22 | 8 | -2.75 |
 | Consolidated Market Hours | xgb | XGBoost | 94 | 36 | 58 | 38.30% | 38.30% | 38.30% | 11.70 pp | -22 | 8 | -2.75 |
 | Consolidated Market Hours Daily | nn | NN | 94 | 36 | 58 | 38.30% | 38.30% | 38.30% | 11.70 pp | -22 | 8 | -2.75 |
 | Consolidated Market Hours Daily | xgb | XGBoost | 94 | 36 | 58 | 38.30% | 38.30% | 38.30% | 11.70 pp | -22 | 8 | -2.75 |
 | Consolidated Hourly | nn | NN | 255 | 105 | 150 | 41.18% | 42.08% | 41.18% | 8.82 pp | -45 | 16 | -2.81 |
 | Consolidated Daily/Hourly Refresh | nn | NN | 255 | 105 | 150 | 41.18% | 42.08% | 41.18% | 8.82 pp | -45 | 16 | -2.81 |
-| BTC Daily | rf | RandomForest | 845 | 351 | 494 | 41.54% | 37.50% | 40.83% | 8.46 pp | -143 | 48 | -2.98 |
+| BTC Daily | rf | RandomForest | 846 | 352 | 494 | 41.61% | 37.50% | 40.83% | 8.39 pp | -142 | 48 | -2.96 |
 | Consolidated Market Hours | mlp_sklearn | MLPClassifier | 94 | 35 | 59 | 37.23% | 37.23% | 37.23% | 12.77 pp | -24 | 8 | -3.00 |
 | Consolidated Market Hours Daily | mlp_sklearn | MLPClassifier | 94 | 35 | 59 | 37.23% | 37.23% | 37.23% | 12.77 pp | -24 | 8 | -3.00 |
 | Consolidated Hourly | xgb | XGBoost | 255 | 103 | 152 | 40.39% | 40.00% | 40.39% | 9.61 pp | -49 | 16 | -3.06 |
@@ -75,7 +75,7 @@ Scope: `all`
 | BTC Hourly | xgb | XGBoost | 1023 | 420 | 603 | 41.06% | 35.00% | 37.71% | 8.94 pp | -183 | 53 | -3.45 |
 | Consolidated Market Hours | lstm | LSTM | 94 | 33 | 61 | 35.11% | 35.11% | 35.11% | 14.89 pp | -28 | 8 | -3.50 |
 | Consolidated Market Hours Daily | lstm | LSTM | 94 | 33 | 61 | 35.11% | 35.11% | 35.11% | 14.89 pp | -28 | 8 | -3.50 |
-| BTC Daily | xgb | XGBoost | 855 | 337 | 518 | 39.42% | 37.92% | 36.25% | 10.58 pp | -181 | 48 | -3.77 |
+| BTC Daily | xgb | XGBoost | 856 | 338 | 518 | 39.49% | 37.92% | 36.25% | 10.51 pp | -180 | 48 | -3.75 |
 
 ## Variation Tables
 
@@ -94,23 +94,23 @@ Scope: `all`
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| BTC Daily | mlp_sklearn | MLPClassifier | 845 | 400 | 445 | 47.34% | 43.33% | 45.83% | 2.66 pp | -45 | 48 | -0.94 |
-| BTC Daily | nn | NN | 845 | 394 | 451 | 46.63% | 45.83% | 45.21% | 3.37 pp | -57 | 48 | -1.19 |
-| BTC Daily | transformer | Transformer | 845 | 389 | 456 | 46.04% | 38.33% | 44.38% | 3.96 pp | -67 | 48 | -1.40 |
-| BTC Daily | lstm | LSTM | 845 | 357 | 488 | 42.25% | 36.25% | 40.00% | 7.75 pp | -131 | 48 | -2.73 |
-| BTC Daily | rf | RandomForest | 845 | 351 | 494 | 41.54% | 37.50% | 40.83% | 8.46 pp | -143 | 48 | -2.98 |
-| BTC Daily | xgb | XGBoost | 855 | 337 | 518 | 39.42% | 37.92% | 36.25% | 10.58 pp | -181 | 48 | -3.77 |
+| BTC Daily | mlp_sklearn | MLPClassifier | 846 | 401 | 445 | 47.40% | 43.33% | 45.83% | 2.60 pp | -44 | 48 | -0.92 |
+| BTC Daily | nn | NN | 846 | 395 | 451 | 46.69% | 45.83% | 45.21% | 3.31 pp | -56 | 48 | -1.17 |
+| BTC Daily | transformer | Transformer | 846 | 390 | 456 | 46.10% | 38.33% | 44.38% | 3.90 pp | -66 | 48 | -1.38 |
+| BTC Daily | lstm | LSTM | 846 | 357 | 489 | 42.20% | 36.25% | 39.79% | 7.80 pp | -132 | 48 | -2.75 |
+| BTC Daily | rf | RandomForest | 846 | 352 | 494 | 41.61% | 37.50% | 40.83% | 8.39 pp | -142 | 48 | -2.96 |
+| BTC Daily | xgb | XGBoost | 856 | 338 | 518 | 39.49% | 37.92% | 36.25% | 10.51 pp | -180 | 48 | -3.75 |
 
 ### BTC Market Hours
 
 | Variation | Model Family | Model Name | Evaluated Predictions | Wins | Losses | Accuracy | Accuracy Last 240 | Accuracy Last 480 | Accuracy Delta From 50% | Net Wins | Active Days | Net Wins / Day |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| BTC Market Hours | mlp_sklearn | MLPClassifier | 617 | 297 | 320 | 48.14% | 46.67% | 47.29% | 1.86 pp | -23 | 57 | -0.40 |
-| BTC Market Hours | nn | NN | 617 | 295 | 322 | 47.81% | 50.42% | 49.58% | 2.19 pp | -27 | 57 | -0.47 |
-| BTC Market Hours | transformer | Transformer | 617 | 288 | 329 | 46.68% | 46.25% | 45.62% | 3.32 pp | -41 | 57 | -0.72 |
-| BTC Market Hours | lstm | LSTM | 617 | 265 | 352 | 42.95% | 43.33% | 43.33% | 7.05 pp | -87 | 57 | -1.53 |
-| BTC Market Hours | rf | RandomForest | 617 | 264 | 353 | 42.79% | 43.33% | 41.88% | 7.21 pp | -89 | 57 | -1.56 |
-| BTC Market Hours | xgb | XGBoost | 617 | 262 | 355 | 42.46% | 46.25% | 42.71% | 7.54 pp | -93 | 57 | -1.63 |
+| BTC Market Hours | mlp_sklearn | MLPClassifier | 618 | 297 | 321 | 48.06% | 46.25% | 47.08% | 1.94 pp | -24 | 57 | -0.42 |
+| BTC Market Hours | nn | NN | 618 | 296 | 322 | 47.90% | 50.42% | 49.79% | 2.10 pp | -26 | 57 | -0.46 |
+| BTC Market Hours | transformer | Transformer | 618 | 288 | 330 | 46.60% | 46.25% | 45.42% | 3.40 pp | -42 | 57 | -0.74 |
+| BTC Market Hours | lstm | LSTM | 618 | 265 | 353 | 42.88% | 42.92% | 43.33% | 7.12 pp | -88 | 57 | -1.54 |
+| BTC Market Hours | rf | RandomForest | 618 | 265 | 353 | 42.88% | 43.75% | 42.08% | 7.12 pp | -88 | 57 | -1.54 |
+| BTC Market Hours | xgb | XGBoost | 618 | 263 | 355 | 42.56% | 46.67% | 42.71% | 7.44 pp | -92 | 57 | -1.61 |
 
 ### BTC Market Hours Daily
 
